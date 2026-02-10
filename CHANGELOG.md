@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.2.0
+
+- Replace awk YAML/JSON parsing with `yq` and `jq`
+- Build compact JSON system prompt via `jq`
+- Add `asimov migrate` for existing projects
+  (removes old cruft, slims project.yaml,
+  flags orphan files)
+- Dependency check with install instructions
+- Fix `cfg_get` returning non-zero on empty values
+
 ## 2.1.0
 
 - Inject protocols via `--append-system-prompt`

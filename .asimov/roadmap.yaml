@@ -2,12 +2,5 @@
 
 current:
   version: "2.2.0"
-  status: in_progress
+  status: released
   summary: "Replace awk with yq/jq + migration command"
-  deliverables:
-    - "Replace awk YAML parsing with yq"
-    - "Replace awk JSON parsing with jq"
-    - "Build compact system prompt with jq (minified)"
-    - "Add asimov migrate for existing projects"
-    - "Check for yq/jq in launch, helpful error if missing"
-    - "Test end-to-end with yq/jq"
