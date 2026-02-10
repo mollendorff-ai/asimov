@@ -11,6 +11,7 @@ make install
 ```
 
 Copies to `~/.local/bin/` and `~/.local/share/asimov/`.
+Requires `yq` and `jq` (`brew install yq jq`).
 
 ## Setup
 
@@ -36,6 +37,7 @@ Creates:
 ```bash
 asimov          # launch AI with protocols + roadmap warmup
 asimov init     # scaffold .asimov/ in current project
+asimov migrate  # update old .asimov/ to latest format
 asimov --help
 ```
 

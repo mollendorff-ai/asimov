@@ -3,7 +3,7 @@
 # Vendor-neutral launcher for Claude Code, Gemini CLI, Codex CLI
 set -euo pipefail
 
-ASIMOV_VERSION="2.1.0"
+ASIMOV_VERSION="2.2.0"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
 ASIMOV_PROJECT_CONFIG=".asimov/launch.yaml"
@@ -16,49 +16,49 @@ else
     if [ -d "${SCRIPT_DIR}/../share/asimov" ]; then
         DATA_DIR="${SCRIPT_DIR}/../share/asimov"
     else
-        # Running from repo checkout
         DATA_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
     fi
 fi
 
-# ─── YAML parser (launch config: 2-indent section, 4-indent key) ────────
+# ─── Dependency check ────────────────────────────────────────────────────
 
-yaml_get() {
-    local file="$1" section="$2" key="$3"
-    [ -f "$file" ] || return 0
-    awk -v section="$section" -v key="$key" '
-        /^  [a-zA-Z]/ { gsub(/:.*/, ""); gsub(/^  /, ""); current = $0 }
-        current == section && $0 ~ "^    " key ":" {
-            val = $0; sub(/^[^:]+: */, "", val); gsub(/"/, "", val); print val
-        }
-    ' "$file"
+check_deps() {
+    local missing=()
+    command -v yq &>/dev/null || missing+=("yq")
+    command -v jq &>/dev/null || missing+=("jq")
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "Missing dependencies: ${missing[*]}" >&2
+        echo "Install:" >&2
+        for dep in "${missing[@]}"; do
+            case "$dep" in
+                yq) echo "  brew install yq  # or: go install github.com/mikefarah/yq/v4@latest" >&2 ;;
+                jq) echo "  brew install jq   # or: apt install jq" >&2 ;;
+            esac
+        done
+        exit 1
+    fi
 }
 
-yaml_list() {
-    local file="$1" section="$2" key="$3"
-    [ -f "$file" ] || return 0
-    awk -v section="$section" -v key="$key" '
-        /^  [a-zA-Z]/ { gsub(/:.*/, ""); gsub(/^  /, ""); current = $0 }
-        current == section && $0 ~ "^    " key ":" { capture = 1; next }
-        capture && /^      - / { val = $0; sub(/^      - /, "", val); gsub(/"/, "", val); print val; next }
-        capture && !/^      / { capture = 0 }
-    ' "$file"
+# ─── Config helpers (yq/jq) ──────────────────────────────────────────────
+
+# Read a YAML value: cfg_get file path (yq dot notation)
+cfg_get() {
+    [ -f "$1" ] || return 0
+    local val
+    val=$(yq -r "$2 // \"\"" "$1")
+    [ "$val" != "null" ] && [ -n "$val" ] && echo "$val"
 }
 
-yaml_env() {
-    local file="$1" section="$2"
-    [ -f "$file" ] || return 0
-    awk -v section="$section" '
-        /^  [a-zA-Z]/ { gsub(/:.*/, ""); gsub(/^  /, ""); current = $0 }
-        current == section && /^    env:/ { capture = 1; next }
-        capture && /^      [A-Z]/ {
-            key = $0; sub(/:.*/, "", key); gsub(/^ +/, "", key)
-            val = $0; sub(/^[^:]+: */, "", val); gsub(/"/, "", val)
-            print key "=" val
-            next
-        }
-        capture && !/^      / { capture = 0 }
-    ' "$file"
+# Read a YAML list as lines: cfg_list file path
+cfg_list() {
+    [ -f "$1" ] || return 0
+    yq -r "$2 // [] | .[]" "$1" 2>/dev/null
+}
+
+# Read a YAML map as KEY=VALUE lines: cfg_env file path
+cfg_env() {
+    [ -f "$1" ] || return 0
+    yq -r "$2 // {} | to_entries[] | .key + \"=\" + .value" "$1" 2>/dev/null
 }
 
 # ─── Default global config ───────────────────────────────────────────────
@@ -93,40 +93,31 @@ YAML
 
 # ─── System prompt builder ───────────────────────────────────────────────
 
-# Extract "rule" value from a protocol JSON file
-json_rule() {
-    [ -f "$1" ] || return 0
-    awk '/"rule":/ {
-        sub(/.*"rule": *"/, ""); sub(/"[, ]*$/, ""); print
-    }' "$1"
-}
-
-# Build compact system prompt from protocols + project identity
 build_system_prompt() {
     [ -d .asimov ] || return 0
-    local prompt="" name="" type=""
 
-    # Project identity
+    local name="" type=""
     if [ -f .asimov/project.yaml ]; then
-        name=$(awk '/^  name:/ { sub(/.*: */, ""); gsub(/"/, ""); print }' \
-            .asimov/project.yaml)
-        type=$(awk '/^  type:/ { sub(/.*: */, ""); gsub(/"/, ""); print }' \
-            .asimov/project.yaml)
+        name=$(cfg_get .asimov/project.yaml '.identity.name')
+        type=$(cfg_get .asimov/project.yaml '.identity.type')
     fi
-    [ -n "$name" ] && prompt="Project: ${name} (${type})."
 
-    # Protocol rules (compact, one per line)
-    local rule
-    for f in freshness sycophancy sprint; do
-        rule=$(json_rule ".asimov/${f}.json")
-        if [ -n "$rule" ]; then
-            prompt="${prompt}
-${f}: ${rule}"
-        fi
-    done
+    # Build compact JSON from protocols + project identity
+    local freshness="" sycophancy="" sprint=""
+    [ -f .asimov/freshness.json ] && freshness=$(jq -r '.rule // empty' .asimov/freshness.json)
+    [ -f .asimov/sycophancy.json ] && sycophancy=$(jq -r '.rule // empty' .asimov/sycophancy.json)
+    [ -f .asimov/sprint.json ] && sprint=$(jq -r '.rule // empty' .asimov/sprint.json)
 
-    [ -z "$prompt" ] && return 0
-    printf '%s' "$prompt"
+    # Need at least one thing to inject
+    [ -z "$name" ] && [ -z "$freshness" ] && [ -z "$sycophancy" ] && [ -z "$sprint" ] && return 0
+
+    jq -c -n \
+        --arg name "$name" \
+        --arg type "$type" \
+        --arg freshness "$freshness" \
+        --arg sycophancy "$sycophancy" \
+        --arg sprint "$sprint" \
+        '{project:{name:$name,type:$type},protocols:{freshness:$freshness,sycophancy:$sycophancy,sprint:$sprint}}'
 }
 
 # ─── AI detection and launch ─────────────────────────────────────────────
@@ -162,6 +153,7 @@ detect_ai() {
 }
 
 launch_ai() {
+    check_deps
     ensure_global_config
 
     # Check if inside an AI session already
@@ -173,8 +165,8 @@ launch_ai() {
 
     # Determine which AI to use
     local ai
-    ai=$(yaml_get "$ASIMOV_PROJECT_CONFIG" "launch" "default_ai")
-    [ -z "$ai" ] && ai=$(yaml_get "$ASIMOV_GLOBAL_CONFIG" "launch" "default_ai")
+    ai=$(cfg_get "$ASIMOV_PROJECT_CONFIG" '.launch.default_ai')
+    [ -z "$ai" ] && ai=$(cfg_get "$ASIMOV_GLOBAL_CONFIG" '.launch.default_ai')
     if [ -n "$ai" ] && ! command -v "$ai" &>/dev/null; then
         echo "Configured AI '${ai}' not found, detecting..." >&2
         ai=""
@@ -183,12 +175,12 @@ launch_ai() {
 
     # Load config: project overrides global
     local model args_list env_list
-    model=$(yaml_get "$ASIMOV_PROJECT_CONFIG" "$ai" "model")
-    [ -z "$model" ] && model=$(yaml_get "$ASIMOV_GLOBAL_CONFIG" "$ai" "model")
-    args_list=$(yaml_list "$ASIMOV_PROJECT_CONFIG" "$ai" "args")
-    [ -z "$args_list" ] && args_list=$(yaml_list "$ASIMOV_GLOBAL_CONFIG" "$ai" "args")
-    env_list=$(yaml_env "$ASIMOV_PROJECT_CONFIG" "$ai")
-    [ -z "$env_list" ] && env_list=$(yaml_env "$ASIMOV_GLOBAL_CONFIG" "$ai")
+    model=$(cfg_get "$ASIMOV_PROJECT_CONFIG" ".launch.${ai}.model")
+    [ -z "$model" ] && model=$(cfg_get "$ASIMOV_GLOBAL_CONFIG" ".launch.${ai}.model")
+    args_list=$(cfg_list "$ASIMOV_PROJECT_CONFIG" ".launch.${ai}.args")
+    [ -z "$args_list" ] && args_list=$(cfg_list "$ASIMOV_GLOBAL_CONFIG" ".launch.${ai}.args")
+    env_list=$(cfg_env "$ASIMOV_PROJECT_CONFIG" ".launch.${ai}.env")
+    [ -z "$env_list" ] && env_list=$(cfg_env "$ASIMOV_GLOBAL_CONFIG" ".launch.${ai}.env")
 
     # Hardcoded defaults if no config
     if [ -z "$args_list" ]; then
@@ -243,6 +235,7 @@ launch_ai() {
 # ─── Init ────────────────────────────────────────────────────────────────
 
 cmd_init() {
+    check_deps
     local name="${1:-$(basename "$(pwd)")}"
 
     if [ -d ".asimov" ]; then
@@ -310,6 +303,91 @@ YAML
     echo "Next: edit .asimov/project.yaml, then run 'asimov' to start"
 }
 
+# ─── Migrate ─────────────────────────────────────────────────────────────
+
+cmd_migrate() {
+    if [ ! -d ".asimov" ]; then
+        echo "No .asimov/ directory found. Nothing to migrate." >&2
+        exit 1
+    fi
+
+    check_deps
+    local changed=0
+
+    # Remove old cruft files
+    for f in coding-standards.json warmup.json asimov.json green.json \
+             migrations.json; do
+        if [ -f ".asimov/${f}" ]; then
+            rm ".asimov/${f}"
+            echo "Removed .asimov/${f}"
+            changed=1
+        fi
+    done
+
+    # Remove old cruft directories
+    for d in roles templates hooks protocols; do
+        if [ -d ".asimov/${d}" ]; then
+            rm -rf ".asimov/${d}"
+            echo "Removed .asimov/${d}/"
+            changed=1
+        fi
+    done
+
+    # Remove old bootstrap files from project root
+    for f in CLAUDE.md GEMINI.md CODEX.md; do
+        if [ -f "$f" ]; then
+            rm "$f"
+            echo "Removed ${f}"
+            changed=1
+        fi
+    done
+
+    # Slim project.yaml to identity only
+    if [ -f .asimov/project.yaml ]; then
+        local name type
+        name=$(cfg_get .asimov/project.yaml '.identity.name')
+        type=$(cfg_get .asimov/project.yaml '.identity.type')
+        if [ -n "$name" ]; then
+            # Check if file has more than just identity
+            local keys
+            keys=$(yq 'keys | .[]' .asimov/project.yaml 2>/dev/null)
+            if echo "$keys" | grep -qvE '^identity$'; then
+                cat > .asimov/project.yaml << YAML
+identity:
+  name: "${name}"
+  type: ${type:-generic}
+YAML
+                echo "Slimmed .asimov/project.yaml to identity only"
+                changed=1
+            fi
+        fi
+    fi
+
+    # Ensure 3 protocols exist (copy missing ones from data dir)
+    for f in freshness.json sycophancy.json sprint.json; do
+        if [ ! -f ".asimov/${f}" ] && [ -f "${DATA_DIR}/protocols/${f}" ]; then
+            cp "${DATA_DIR}/protocols/${f}" ".asimov/${f}"
+            echo "Added .asimov/${f}"
+            changed=1
+        fi
+    done
+
+    # Update pre-commit hook if git repo
+    if [ -d .git ] && [ -f "${DATA_DIR}/hooks/pre-commit" ]; then
+        cp "${DATA_DIR}/hooks/pre-commit" .git/hooks/pre-commit
+        chmod +x .git/hooks/pre-commit
+        echo "Updated pre-commit hook"
+        changed=1
+    fi
+
+    if [ "$changed" -eq 0 ]; then
+        echo "Already up to date."
+    else
+        echo ""
+        echo "Migration complete."
+    fi
+}
+
 # ─── Help ────────────────────────────────────────────────────────────────
 
 show_help() {
@@ -319,8 +397,13 @@ asimov v${ASIMOV_VERSION} - AI guardrails: protocols + quality gate
 USAGE:
     asimov              Launch AI CLI with protocols (default)
     asimov init [name]  Initialize .asimov/ in current project
+    asimov migrate      Update .asimov/ to latest format
     asimov --help       Show this help
     asimov --version    Show version
+
+DEPENDENCIES:
+    yq                  YAML parser (brew install yq)
+    jq                  JSON parser (brew install jq)
 
 CONFIGURATION:
     Global:  ~/.asimov/config.yaml
@@ -343,6 +426,7 @@ EOF
 
 case "${1:-}" in
     init)       shift; cmd_init "$@" ;;
+    migrate)    cmd_migrate ;;
     --help|-h)  show_help ;;
     --version)  echo "asimov ${ASIMOV_VERSION}" ;;
     "")         launch_ai ;;
