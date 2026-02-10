@@ -1,0 +1,350 @@
+#!/usr/bin/env bash
+# Asimov - AI guardrails: protocols + quality gate
+# Vendor-neutral launcher for Claude Code, Gemini CLI, Codex CLI
+set -euo pipefail
+
+ASIMOV_VERSION="2.1.0"
+ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
+ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
+ASIMOV_PROJECT_CONFIG=".asimov/launch.yaml"
+
+# Resolve data directory (protocols, hooks)
+if [ -n "${ASIMOV_DATA:-}" ]; then
+    DATA_DIR="$ASIMOV_DATA"
+else
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    if [ -d "${SCRIPT_DIR}/../share/asimov" ]; then
+        DATA_DIR="${SCRIPT_DIR}/../share/asimov"
+    else
+        # Running from repo checkout
+        DATA_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    fi
+fi
+
+# ─── YAML parser (launch config: 2-indent section, 4-indent key) ────────
+
+yaml_get() {
+    local file="$1" section="$2" key="$3"
+    [ -f "$file" ] || return 0
+    awk -v section="$section" -v key="$key" '
+        /^  [a-zA-Z]/ { gsub(/:.*/, ""); gsub(/^  /, ""); current = $0 }
+        current == section && $0 ~ "^    " key ":" {
+            val = $0; sub(/^[^:]+: */, "", val); gsub(/"/, "", val); print val
+        }
+    ' "$file"
+}
+
+yaml_list() {
+    local file="$1" section="$2" key="$3"
+    [ -f "$file" ] || return 0
+    awk -v section="$section" -v key="$key" '
+        /^  [a-zA-Z]/ { gsub(/:.*/, ""); gsub(/^  /, ""); current = $0 }
+        current == section && $0 ~ "^    " key ":" { capture = 1; next }
+        capture && /^      - / { val = $0; sub(/^      - /, "", val); gsub(/"/, "", val); print val; next }
+        capture && !/^      / { capture = 0 }
+    ' "$file"
+}
+
+yaml_env() {
+    local file="$1" section="$2"
+    [ -f "$file" ] || return 0
+    awk -v section="$section" '
+        /^  [a-zA-Z]/ { gsub(/:.*/, ""); gsub(/^  /, ""); current = $0 }
+        current == section && /^    env:/ { capture = 1; next }
+        capture && /^      [A-Z]/ {
+            key = $0; sub(/:.*/, "", key); gsub(/^ +/, "", key)
+            val = $0; sub(/^[^:]+: */, "", val); gsub(/"/, "", val)
+            print key "=" val
+            next
+        }
+        capture && !/^      / { capture = 0 }
+    ' "$file"
+}
+
+# ─── Default global config ───────────────────────────────────────────────
+
+ensure_global_config() {
+    [ -d "$ASIMOV_GLOBAL_DIR" ] && return 0
+    mkdir -p "$ASIMOV_GLOBAL_DIR"
+    cat > "$ASIMOV_GLOBAL_CONFIG" << 'YAML'
+# Asimov - Global Configuration
+# Docs: https://github.com/mollendorff-ai/asimov
+
+launch:
+  default_ai: claude
+
+  claude:
+    model: opus
+    args:
+      - --dangerously-skip-permissions
+    env:
+      MAX_THINKING_TOKENS: "1000000"
+
+  gemini:
+    args:
+      - --yolo
+
+  codex:
+    args:
+      - --full-auto
+YAML
+    echo "Created global config: ${ASIMOV_GLOBAL_CONFIG}"
+}
+
+# ─── System prompt builder ───────────────────────────────────────────────
+
+# Extract "rule" value from a protocol JSON file
+json_rule() {
+    [ -f "$1" ] || return 0
+    awk '/"rule":/ {
+        sub(/.*"rule": *"/, ""); sub(/"[, ]*$/, ""); print
+    }' "$1"
+}
+
+# Build compact system prompt from protocols + project identity
+build_system_prompt() {
+    [ -d .asimov ] || return 0
+    local prompt="" name="" type=""
+
+    # Project identity
+    if [ -f .asimov/project.yaml ]; then
+        name=$(awk '/^  name:/ { sub(/.*: */, ""); gsub(/"/, ""); print }' \
+            .asimov/project.yaml)
+        type=$(awk '/^  type:/ { sub(/.*: */, ""); gsub(/"/, ""); print }' \
+            .asimov/project.yaml)
+    fi
+    [ -n "$name" ] && prompt="Project: ${name} (${type})."
+
+    # Protocol rules (compact, one per line)
+    local rule
+    for f in freshness sycophancy sprint; do
+        rule=$(json_rule ".asimov/${f}.json")
+        if [ -n "$rule" ]; then
+            prompt="${prompt}
+${f}: ${rule}"
+        fi
+    done
+
+    [ -z "$prompt" ] && return 0
+    printf '%s' "$prompt"
+}
+
+# ─── AI detection and launch ─────────────────────────────────────────────
+
+is_inside_session() {
+    [ -n "${CLAUDECODE:-}" ] || [ -n "${CLAUDE_CODE_ENTRYPOINT:-}" ] && echo "Claude Code" && return 0
+    [ -n "${GEMINI_CLI:-}" ] && echo "Gemini CLI" && return 0
+    [ -n "${CODEX_CLI:-}" ] && echo "Codex CLI" && return 0
+    return 1
+}
+
+detect_ai() {
+    local found=()
+    command -v claude &>/dev/null && found+=("claude")
+    command -v gemini &>/dev/null && found+=("gemini")
+    command -v codex &>/dev/null && found+=("codex")
+
+    if [ ${#found[@]} -eq 0 ]; then
+        echo "No AI CLI found. Install one of:" >&2
+        echo "  Claude Code: https://docs.anthropic.com/en/docs/claude-code" >&2
+        echo "  Gemini CLI:  https://github.com/google-gemini/gemini-cli" >&2
+        echo "  Codex CLI:   https://github.com/openai/codex" >&2
+        exit 1
+    elif [ ${#found[@]} -eq 1 ]; then
+        echo "${found[0]}"
+    else
+        echo "Multiple AI CLIs found: ${found[*]}" >&2
+        echo "Set default_ai in ${ASIMOV_GLOBAL_CONFIG}" >&2
+        select ai in "${found[@]}"; do
+            [ -n "$ai" ] && echo "$ai" && return 0
+        done
+    fi
+}
+
+launch_ai() {
+    ensure_global_config
+
+    # Check if inside an AI session already
+    local session
+    if session=$(is_inside_session); then
+        echo "Inside ${session} session. Protocols active via system prompt."
+        exit 0
+    fi
+
+    # Determine which AI to use
+    local ai
+    ai=$(yaml_get "$ASIMOV_PROJECT_CONFIG" "launch" "default_ai")
+    [ -z "$ai" ] && ai=$(yaml_get "$ASIMOV_GLOBAL_CONFIG" "launch" "default_ai")
+    if [ -n "$ai" ] && ! command -v "$ai" &>/dev/null; then
+        echo "Configured AI '${ai}' not found, detecting..." >&2
+        ai=""
+    fi
+    [ -z "$ai" ] && ai=$(detect_ai)
+
+    # Load config: project overrides global
+    local model args_list env_list
+    model=$(yaml_get "$ASIMOV_PROJECT_CONFIG" "$ai" "model")
+    [ -z "$model" ] && model=$(yaml_get "$ASIMOV_GLOBAL_CONFIG" "$ai" "model")
+    args_list=$(yaml_list "$ASIMOV_PROJECT_CONFIG" "$ai" "args")
+    [ -z "$args_list" ] && args_list=$(yaml_list "$ASIMOV_GLOBAL_CONFIG" "$ai" "args")
+    env_list=$(yaml_env "$ASIMOV_PROJECT_CONFIG" "$ai")
+    [ -z "$env_list" ] && env_list=$(yaml_env "$ASIMOV_GLOBAL_CONFIG" "$ai")
+
+    # Hardcoded defaults if no config
+    if [ -z "$args_list" ]; then
+        case "$ai" in
+            claude) args_list="--dangerously-skip-permissions" ;;
+            gemini) args_list="--yolo" ;;
+            codex)  args_list="--full-auto" ;;
+        esac
+    fi
+    if [ -z "$model" ]; then
+        case "$ai" in claude) model="opus" ;; esac
+    fi
+    if [ -z "$env_list" ]; then
+        case "$ai" in claude) env_list="MAX_THINKING_TOKENS=1000000" ;; esac
+    fi
+
+    # Set env vars
+    while IFS= read -r line; do
+        [ -n "$line" ] && export "$line"
+    done <<< "$env_list"
+
+    # Build args array
+    local args=()
+    while IFS= read -r arg; do
+        [ -n "$arg" ] && args+=("$arg")
+    done <<< "$args_list"
+    [ -n "$model" ] && args+=("--model" "$model")
+
+    # Inject protocols via system prompt (never compacted)
+    local sys_prompt
+    sys_prompt=$(build_system_prompt)
+    if [ -n "$sys_prompt" ]; then
+        case "$ai" in
+            claude) args+=("--append-system-prompt" "$sys_prompt") ;;
+        esac
+    fi
+
+    # Two-step launch for Claude: warmup (read roadmap) then interactive
+    if [ "$ai" = "claude" ] && [ -f .asimov/roadmap.yaml ]; then
+        echo "Warming up..."
+        "$ai" "${args[@]}" \
+            -p "Read .asimov/roadmap.yaml. One-line summary of current sprint."
+        echo ""
+        exec "$ai" "${args[@]}" --continue
+    fi
+
+    # Direct launch for other AIs or when no roadmap exists
+    echo "Launching ${ai}..."
+    exec "$ai" "${args[@]}"
+}
+
+# ─── Init ────────────────────────────────────────────────────────────────
+
+cmd_init() {
+    local name="${1:-$(basename "$(pwd)")}"
+
+    if [ -d ".asimov" ]; then
+        echo ".asimov/ already exists. Remove it first to reinitialize." >&2
+        exit 1
+    fi
+
+    # Detect project type
+    local ptype="generic"
+    if [ -f Cargo.toml ]; then ptype="rust"
+    elif [ -f package.json ]; then ptype="node"
+    elif [ -f pyproject.toml ] || [ -f setup.py ]; then ptype="python"
+    elif [ -f go.mod ]; then ptype="go"
+    elif [ -f pubspec.yaml ]; then ptype="flutter"
+    fi
+
+    # Create .asimov/ with 3 protocols
+    mkdir -p .asimov
+    for f in freshness.json sycophancy.json sprint.json; do
+        if [ -f "${DATA_DIR}/protocols/${f}" ]; then
+            cp "${DATA_DIR}/protocols/${f}" ".asimov/${f}"
+        fi
+    done
+
+    # Generate project.yaml (identity only, quality enforced by hook)
+    cat > .asimov/project.yaml << YAML
+identity:
+  name: "${name}"
+  type: ${ptype}
+YAML
+
+    # Generate roadmap.yaml
+    cat > .asimov/roadmap.yaml << 'YAML'
+current:
+  version: "0.1.0"
+  status: in_progress
+  summary: "Initial setup"
+  deliverables:
+    - "Define project goals"
+    - "Set up development environment"
+YAML
+
+    # Install pre-commit hook
+    if [ -d .git ]; then
+        mkdir -p .git/hooks
+        if [ -f "${DATA_DIR}/hooks/pre-commit" ]; then
+            cp "${DATA_DIR}/hooks/pre-commit" .git/hooks/pre-commit
+            chmod +x .git/hooks/pre-commit
+            echo "Installed pre-commit hook"
+        fi
+    else
+        echo "Warning: not a git repo. Run 'git init' to get the pre-commit hook."
+    fi
+
+    echo ""
+    echo "Initialized .asimov/ for '${name}' (${ptype})"
+    echo ""
+    echo "Files created:"
+    echo "  .asimov/project.yaml"
+    echo "  .asimov/roadmap.yaml"
+    echo "  .asimov/freshness.json"
+    echo "  .asimov/sycophancy.json"
+    echo "  .asimov/sprint.json"
+    echo ""
+    echo "Next: edit .asimov/project.yaml, then run 'asimov' to start"
+}
+
+# ─── Help ────────────────────────────────────────────────────────────────
+
+show_help() {
+    cat << EOF
+asimov v${ASIMOV_VERSION} - AI guardrails: protocols + quality gate
+
+USAGE:
+    asimov              Launch AI CLI with protocols (default)
+    asimov init [name]  Initialize .asimov/ in current project
+    asimov --help       Show this help
+    asimov --version    Show version
+
+CONFIGURATION:
+    Global:  ~/.asimov/config.yaml
+    Project: .asimov/launch.yaml (overrides global)
+
+PROTOCOLS (injected via system prompt, never compacted):
+    .asimov/freshness.json   Use ref fetch for web content
+    .asimov/sycophancy.json  Truth over comfort
+    .asimov/sprint.json      Autonomous mode triggers
+
+QUALITY:
+    Pre-commit hook enforces format + lint + 100% coverage.
+    Run 'asimov init' to install the hook.
+
+Docs: https://github.com/mollendorff-ai/asimov
+EOF
+}
+
+# ─── Main ────────────────────────────────────────────────────────────────
+
+case "${1:-}" in
+    init)       shift; cmd_init "$@" ;;
+    --help|-h)  show_help ;;
+    --version)  echo "asimov ${ASIMOV_VERSION}" ;;
+    "")         launch_ai ;;
+    *)          echo "Unknown command: $1. Run 'asimov --help'" >&2; exit 1 ;;
+esac

@@ -1,0 +1,24 @@
+# Asimov Roadmap
+
+current:
+  version: "2.1.0"
+  status: in_progress
+  summary: "Reliable context injection + protocol cleanup"
+  deliverables:
+    - "Drop coding-standards.json (pre-commit hook is the enforcer)"
+    - "Drop bootstrap files (CLAUDE.md, gemini.md, codex.md)"
+    - "Strip quality section from project.yaml (hook has it)"
+    - "Compact protocols to minified JSON for system prompt injection"
+    - "Inject protocols + project config via --append-system-prompt"
+    - "Warmup via -p to force roadmap reading, then --continue"
+    - "Update bin/asimov launch flow (two-step: warmup + continue)"
+    - "Update asimov init (no bootstrap copy, no coding-standards)"
+    - "Test end-to-end: asimov launches, protocols active, roadmap read"
+
+previous:
+  - version: "2.0.0"
+    status: released
+    summary: "Shell migration: replaced 16K lines of Rust with ~335 lines of shell"
+  - version: "14.1.0"
+    status: released
+    summary: "Final Rust version (tagged v14.1.0-rust-final)"

@@ -1,0 +1,8 @@
+# OS files
+.DS_Store
+
+# Rust build artifacts (from pre-v2.0 era)
+/target
+
+# Session checkpoints
+.claude_checkpoint.yaml
