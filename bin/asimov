@@ -3,7 +3,7 @@
 # Vendor-neutral launcher for Claude Code, Gemini CLI, Codex CLI
 set -euo pipefail
 
-ASIMOV_VERSION="2.2.0"
+ASIMOV_VERSION="2.3.0"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
 ASIMOV_PROJECT_CONFIG=".asimov/launch.yaml"
@@ -106,13 +106,14 @@ build_system_prompt() {
     fi
 
     # Build compact JSON from protocols + project identity
-    local freshness="" sycophancy="" sprint=""
+    local freshness="" sycophancy="" sprint="" coding_standards=""
     [ -f .asimov/freshness.json ] && freshness=$(jq -r '.rule // empty' .asimov/freshness.json)
     [ -f .asimov/sycophancy.json ] && sycophancy=$(jq -r '.rule // empty' .asimov/sycophancy.json)
     [ -f .asimov/sprint.json ] && sprint=$(jq -r '.rule // empty' .asimov/sprint.json)
+    [ -f .asimov/coding-standards.json ] && coding_standards=$(jq -r '.rule // empty' .asimov/coding-standards.json)
 
     # Need at least one thing to inject
-    [ -z "$name" ] && [ -z "$freshness" ] && [ -z "$sycophancy" ] && [ -z "$sprint" ] && return 0
+    [ -z "$name" ] && [ -z "$freshness" ] && [ -z "$sycophancy" ] && [ -z "$sprint" ] && [ -z "$coding_standards" ] && return 0
 
     jq -c -n \
         --arg name "$name" \
@@ -120,7 +121,8 @@ build_system_prompt() {
         --arg freshness "$freshness" \
         --arg sycophancy "$sycophancy" \
         --arg sprint "$sprint" \
-        '{project:{name:$name,type:$type},protocols:{freshness:$freshness,sycophancy:$sycophancy,sprint:$sprint}}'
+        --arg coding_standards "$coding_standards" \
+        '{project:{name:$name,type:$type},protocols:{freshness:$freshness,sycophancy:$sycophancy,sprint:$sprint,coding_standards:$coding_standards}}'
 }
 
 # ─── AI detection and launch ─────────────────────────────────────────────
@@ -212,6 +214,15 @@ launch_ai() {
     done <<< "$args_list"
     [ -n "$model" ] && args+=("--model" "$model")
 
+    # Ensure protocols are up to date (sync missing from data dir)
+    if [ -d .asimov ]; then
+        for f in freshness.json sycophancy.json sprint.json coding-standards.json; do
+            if [ ! -f ".asimov/${f}" ] && [ -f "${DATA_DIR}/protocols/${f}" ]; then
+                cp "${DATA_DIR}/protocols/${f}" ".asimov/${f}"
+            fi
+        done
+    fi
+
     # Inject protocols via system prompt (never compacted)
     local sys_prompt
     sys_prompt=$(build_system_prompt)
@@ -255,9 +266,9 @@ cmd_init() {
     elif [ -f pubspec.yaml ]; then ptype="flutter"
     fi
 
-    # Create .asimov/ with 3 protocols
+    # Create .asimov/ with 4 protocols
     mkdir -p .asimov
-    for f in freshness.json sycophancy.json sprint.json; do
+    for f in freshness.json sycophancy.json sprint.json coding-standards.json; do
         if [ -f "${DATA_DIR}/protocols/${f}" ]; then
             cp "${DATA_DIR}/protocols/${f}" ".asimov/${f}"
         fi
@@ -302,6 +313,7 @@ YAML
     echo "  .asimov/freshness.json"
     echo "  .asimov/sycophancy.json"
     echo "  .asimov/sprint.json"
+    echo "  .asimov/coding-standards.json"
     echo ""
     echo "Next: edit .asimov/project.yaml, then run 'asimov' to start"
 }
@@ -318,8 +330,7 @@ cmd_migrate() {
     local changed=0
 
     # Remove old cruft files
-    for f in coding-standards.json warmup.json asimov.json green.json \
-             migrations.json; do
+    for f in warmup.json asimov.json green.json migrations.json; do
         if [ -f ".asimov/${f}" ]; then
             rm ".asimov/${f}"
             echo "Removed .asimov/${f}"
@@ -366,8 +377,8 @@ YAML
         fi
     fi
 
-    # Ensure 3 protocols exist (copy missing ones from data dir)
-    for f in freshness.json sycophancy.json sprint.json; do
+    # Ensure 4 protocols exist (copy missing ones from data dir)
+    for f in freshness.json sycophancy.json sprint.json coding-standards.json; do
         if [ ! -f ".asimov/${f}" ] && [ -f "${DATA_DIR}/protocols/${f}" ]; then
             cp "${DATA_DIR}/protocols/${f}" ".asimov/${f}"
             echo "Added .asimov/${f}"
@@ -384,7 +395,7 @@ YAML
     fi
 
     # Warn about unexpected files
-    local expected="project.yaml roadmap.yaml freshness.json sycophancy.json sprint.json launch.yaml"
+    local expected="project.yaml roadmap.yaml freshness.json sycophancy.json sprint.json coding-standards.json launch.yaml"
     local orphans=""
     for f in .asimov/*; do
         [ -e "$f" ] || continue
@@ -431,9 +442,10 @@ CONFIGURATION:
     Project: .asimov/launch.yaml (overrides global)
 
 PROTOCOLS (injected via system prompt, never compacted):
-    .asimov/freshness.json   Use ref fetch for web content
-    .asimov/sycophancy.json  Truth over comfort
-    .asimov/sprint.json      Autonomous mode triggers
+    .asimov/freshness.json          Use ref fetch for web content
+    .asimov/sycophancy.json         Truth over comfort
+    .asimov/sprint.json             Autonomous mode triggers
+    .asimov/coding-standards.json   Code quality principles
 
 QUALITY:
     Pre-commit hook enforces format + lint + 100% coverage.

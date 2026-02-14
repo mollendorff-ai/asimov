@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.3.0
+
+- Bring back `coding-standards.json` as fourth core
+  protocol (was dropped in 2.1.0 as hook-only concern;
+  restored because code quality principles steer AI
+  behavior beyond what pre-commit hooks enforce)
+- `init` installs all 4 protocols
+- `migrate` adds `coding-standards.json` if missing
+  (no longer treated as cruft)
+- System prompt includes coding-standards rule
+- Self-contained `rule` field replaces old
+  "see project.yaml" indirection
+
 ## 2.2.0
 
 - Replace awk YAML/JSON parsing with `yq` and `jq`

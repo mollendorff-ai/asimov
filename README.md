@@ -24,11 +24,12 @@ Creates:
 
 ```text
 .asimov/
-├── project.yaml    # project identity
-├── roadmap.yaml    # milestones + sprint status
-├── freshness.json  # protocol: use ref fetch
-├── sycophancy.json # protocol: truth over comfort
-└── sprint.json     # protocol: autonomous mode
+├── project.yaml          # project identity
+├── roadmap.yaml          # milestones + sprint status
+├── freshness.json        # protocol: use ref fetch
+├── sycophancy.json       # protocol: truth over comfort
+├── sprint.json           # protocol: autonomous mode
+└── coding-standards.json # protocol: code quality
 .git/hooks/pre-commit
 ```
 
@@ -104,6 +105,8 @@ Injected into the AI system prompt at launch
   comfort, disagree when appropriate
 - **sprint.json** -- when roadmap status is
   `autonomous`, work until deliverables are done
+- **coding-standards.json** -- human-readable code,
+  tests as docs, zero warnings, quality over speed
 
 ## License
 
