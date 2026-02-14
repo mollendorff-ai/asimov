@@ -1,18 +1,21 @@
 # Asimov Roadmap
 
 current:
-  version: "2.3.0"
-  status: released
-  summary: "Coding-standards as fourth core protocol"
+  version: "2.4.0"
+  status: in_progress
+  summary: "Enrich project.yaml with description, stack, conventions"
   deliverables:
-    - "Add adapted coding-standards.json to protocols/ (bundled source)"
-    - "cmd_init: install coding-standards.json alongside the other three"
-    - "cmd_migrate: stop deleting coding-standards.json, add it if missing"
-    - "build_system_prompt: include coding-standards rule in protocol injection"
-    - "Orphan detection: add coding-standards.json to known files"
-    - "Update README, CHANGELOG"
+    - "Add description, stack, conventions fields to project.yaml schema"
+    - "build_system_prompt: inject new fields into AI context"
+    - "cmd_init: generate project.yaml with new fields (TODO placeholders)"
+    - "cmd_migrate: add missing fields to existing project.yaml"
+    - "launch_ai: warn if description is empty or TODO"
+    - "Update CHANGELOG"
 
 previous:
+  - version: "2.3.0"
+    status: released
+    summary: "Coding-standards as fourth core protocol"
   - version: "2.2.0"
     status: released
     summary: "Replace awk with yq/jq + migration command"

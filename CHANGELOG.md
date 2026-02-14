@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.0
+
+- Enrich `project.yaml` with `description`, `stack`,
+  `conventions` fields (gives LLM context about the
+  project without expensive codebase exploration)
+- `build_system_prompt` injects new fields into AI context
+- `init` generates project.yaml with TODO placeholders
+- `migrate` adds missing fields to existing project.yaml
+  (surgical: preserves existing values, removes legacy keys)
+- `launch` warns if description is empty or still TODO
+
 ## 2.3.0
 
 - Bring back `coding-standards.json` as fourth core

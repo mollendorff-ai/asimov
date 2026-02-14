@@ -3,7 +3,7 @@
 # Vendor-neutral launcher for Claude Code, Gemini CLI, Codex CLI
 set -euo pipefail
 
-ASIMOV_VERSION="2.3.0"
+ASIMOV_VERSION="2.4.0"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
 ASIMOV_PROJECT_CONFIG=".asimov/launch.yaml"
@@ -99,11 +99,16 @@ YAML
 build_system_prompt() {
     [ -d .asimov ] || return 0
 
-    local name="" type=""
+    local name="" type="" description="" stack="" conventions=""
     if [ -f .asimov/project.yaml ]; then
         name=$(cfg_get .asimov/project.yaml '.identity.name')
         type=$(cfg_get .asimov/project.yaml '.identity.type')
+        description=$(cfg_get .asimov/project.yaml '.description')
+        stack=$(yq -r '.stack // [] | join(", ")' .asimov/project.yaml 2>/dev/null)
+        conventions=$(yq -r '.conventions // [] | join(" | ")' .asimov/project.yaml 2>/dev/null)
     fi
+    # Strip TODO placeholder from injection
+    [ "$description" = "TODO: describe your project" ] && description=""
 
     # Build compact JSON from protocols + project identity
     local freshness="" sycophancy="" sprint="" coding_standards=""
@@ -118,11 +123,14 @@ build_system_prompt() {
     jq -c -n \
         --arg name "$name" \
         --arg type "$type" \
+        --arg description "$description" \
+        --arg stack "$stack" \
+        --arg conventions "$conventions" \
         --arg freshness "$freshness" \
         --arg sycophancy "$sycophancy" \
         --arg sprint "$sprint" \
         --arg coding_standards "$coding_standards" \
-        '{project:{name:$name,type:$type},protocols:{freshness:$freshness,sycophancy:$sycophancy,sprint:$sprint,coding_standards:$coding_standards}}'
+        '{project:{name:$name,type:$type,description:$description,stack:$stack,conventions:$conventions},protocols:{freshness:$freshness,sycophancy:$sycophancy,sprint:$sprint,coding_standards:$coding_standards}}'
 }
 
 # ─── AI detection and launch ─────────────────────────────────────────────
@@ -223,6 +231,15 @@ launch_ai() {
         done
     fi
 
+    # Warn if project description is missing
+    if [ -d .asimov ] && [ -f .asimov/project.yaml ]; then
+        local desc
+        desc=$(cfg_get .asimov/project.yaml '.description')
+        if [ -z "$desc" ] || [ "$desc" = "TODO: describe your project" ]; then
+            echo "Warning: .asimov/project.yaml has no description. Fill it in for better AI context." >&2
+        fi
+    fi
+
     # Inject protocols via system prompt (never compacted)
     local sys_prompt
     sys_prompt=$(build_system_prompt)
@@ -274,11 +291,17 @@ cmd_init() {
         fi
     done
 
-    # Generate project.yaml (identity only, quality enforced by hook)
+    # Generate project.yaml
     cat > .asimov/project.yaml << YAML
 identity:
   name: "${name}"
   type: ${ptype}
+
+description: "TODO: describe your project"
+
+stack: []
+
+conventions: []
 YAML
 
     # Generate roadmap.yaml
@@ -356,24 +379,32 @@ cmd_migrate() {
         fi
     done
 
-    # Slim project.yaml to identity only
+    # Clean up and enrich project.yaml
     if [ -f .asimov/project.yaml ]; then
-        local name type
-        name=$(cfg_get .asimov/project.yaml '.identity.name')
-        type=$(cfg_get .asimov/project.yaml '.identity.type')
-        if [ -n "$name" ]; then
-            # Check if file has more than just identity
-            local keys
-            keys=$(yq 'keys | .[]' .asimov/project.yaml 2>/dev/null)
-            if echo "$keys" | grep -qvE '^identity$'; then
-                cat > .asimov/project.yaml << YAML
-identity:
-  name: "${name}"
-  type: ${type:-generic}
-YAML
-                echo "Slimmed .asimov/project.yaml to identity only"
+        # Remove legacy keys
+        for key in quality files; do
+            if yq -e ".${key}" .asimov/project.yaml &>/dev/null; then
+                yq -i "del(.${key})" .asimov/project.yaml
+                echo "Removed legacy '${key}' from project.yaml"
                 changed=1
             fi
+        done
+
+        # Add new fields if missing
+        if ! yq -e '.description' .asimov/project.yaml &>/dev/null; then
+            yq -i '.description = "TODO: describe your project"' .asimov/project.yaml
+            echo "Added 'description' to project.yaml (fill it in!)"
+            changed=1
+        fi
+        if ! yq -e '.stack' .asimov/project.yaml &>/dev/null; then
+            yq -i '.stack = []' .asimov/project.yaml
+            echo "Added 'stack' to project.yaml"
+            changed=1
+        fi
+        if ! yq -e '.conventions' .asimov/project.yaml &>/dev/null; then
+            yq -i '.conventions = []' .asimov/project.yaml
+            echo "Added 'conventions' to project.yaml"
+            changed=1
         fi
     fi
 

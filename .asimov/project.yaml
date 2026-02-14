@@ -1,3 +1,17 @@
 identity:
-  name: asimov
+  name: "asimov"
   type: shell
+
+description: >
+  AI guardrails framework. Launches Claude/Gemini/Codex with behavioral
+  protocols and enforces a pre-commit quality gate.
+
+stack:
+  - bash
+  - yq
+  - jq
+
+conventions:
+  - "Single script (bin/asimov), no compiled dependencies"
+  - "Protocols are self-contained JSON with a rule field"
+  - "Pre-commit enforces format + lint + 100% coverage"
