@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck bin/asimov
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: bin
+      - name: ShellCheck hooks/pre-commit
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: hooks
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+      - name: Install bats-core
+        run: |
+          sudo apt-get install -y bats
+      - name: Run tests
+        run: make test

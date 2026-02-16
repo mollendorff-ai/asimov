@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.7.0
+
+- Reframe README: lead with the problem (AI sessions
+  start cold), position as developer tooling for
+  AI-assisted workflows
+- Add CONTRIBUTING.md (dev setup, project structure,
+  PR guidelines, how to add protocols and languages)
+- Add GitHub issue templates (bug report, feature request)
+
+## 2.6.0
+
+- Add GitHub Actions CI: shellcheck lint + bats tests
+  on push and PR
+- Add `make lint` target (shellcheck on all shell scripts)
+- Fix shellcheck SC2163 warning in env var export
+
 ## 2.5.0
 
 - Add test suite with bats-core (77 tests)

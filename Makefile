@@ -1,4 +1,4 @@
-.PHONY: install uninstall test
+.PHONY: install uninstall test lint
 
 PREFIX ?= $(HOME)/.local
 BINDIR = $(PREFIX)/bin
@@ -21,6 +21,9 @@ uninstall:
 	rm -f $(BINDIR)/asimov
 	rm -rf $(DATADIR)
 	@echo "Uninstalled asimov"
+
+lint:
+	shellcheck bin/asimov hooks/pre-commit
 
 test:
 	bats test/

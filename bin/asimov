@@ -3,7 +3,7 @@
 # Vendor-neutral launcher for Claude Code, Gemini CLI, Codex CLI
 set -euo pipefail
 
-ASIMOV_VERSION="2.5.0"
+ASIMOV_VERSION="2.7.0"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
 ASIMOV_PROJECT_CONFIG=".asimov/launch.yaml"
@@ -210,8 +210,9 @@ launch_ai() {
         case "$ai" in claude) env_list="MAX_THINKING_TOKENS=1000000" ;; esac
     fi
 
-    # Set env vars
+    # Set env vars (line is KEY=VALUE, not a variable name)
     while IFS= read -r line; do
+        # shellcheck disable=SC2163
         [ -n "$line" ] && export "$line"
     done <<< "$env_list"
 

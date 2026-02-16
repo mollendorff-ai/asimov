@@ -1,35 +1,6 @@
 # Asimov Roadmap
 
 current:
-  version: "2.5.0"
+  version: "2.7.0"
   status: released
-  summary: "Add bats test suite (77 tests)"
-
-backlog:
-  - version: "2.6.0"
-    summary: "CI pipeline with GitHub Actions"
-    deliverables:
-      - "Lint: shellcheck on all shell scripts"
-      - "Test: run test suite on push/PR"
-      - "Coverage: enforce threshold in CI"
-
-  - version: "2.7.0"
-    summary: "Open-source polish: README reframe + CONTRIBUTING.md"
-    deliverables:
-      - "Reframe README: lead with problem, not solution category"
-      - "Position as 'developer tooling for AI-assisted workflows' not 'orchestration framework'"
-      - "Add CONTRIBUTING.md with dev setup and PR guidelines"
-      - "Add GitHub issue templates"
-      - "Final review and publish as public FOSS repo"
-
-released:
-  - version: "2.4.0"
-    summary: "Enrich project.yaml with description, stack, conventions"
-  - version: "2.3.0"
-    summary: "Coding-standards as fourth core protocol"
-  - version: "2.2.0"
-    summary: "Replace awk with yq/jq + migration command"
-  - version: "2.1.0"
-    summary: "Protocol injection via system prompt, drop bootstrap files"
-  - version: "2.0.0"
-    summary: "Migrate from 16K-line Rust binary to shell script"
+  summary: "Open-source polish: README reframe + CONTRIBUTING.md"
