@@ -1,5 +1,8 @@
 # Asimov
 
+[![CI](https://github.com/mollendorff-ai/asimov/actions/workflows/ci.yml/badge.svg)](https://github.com/mollendorff-ai/asimov/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 AI coding assistants (Claude Code, Gemini CLI, Codex CLI) launch
 with no memory of your project's conventions. Every session starts
 cold: the AI doesn't know your stack, your quality bar, or what
