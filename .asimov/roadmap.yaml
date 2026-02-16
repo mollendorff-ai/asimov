@@ -1,6 +1,4 @@
 # Asimov Roadmap
+# See CHANGELOG.md for release history.
 
-current:
-  version: "2.7.0"
-  status: released
-  summary: "Open-source polish: README reframe + CONTRIBUTING.md"
+current: {}
