@@ -23,8 +23,4 @@ uninstall:
 	@echo "Uninstalled asimov"
 
 test:
-	@echo "Testing asimov..."
-	./bin/asimov --version
-	./bin/asimov --help
-	@echo ""
-	@echo "All tests passed"
+	bats test/

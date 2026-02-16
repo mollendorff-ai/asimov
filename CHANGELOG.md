@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.5.0
+
+- Add test suite with bats-core (77 tests)
+  - Config helpers: cfg_get, cfg_list, cfg_env
+  - Init command: scaffolding, type detection, hook install
+  - Migrate command: cruft removal, project.yaml enrichment, orphan detection
+  - System prompt builder: JSON output, protocol injection
+  - AI detection: is_inside_session, detect_ai, ensure_global_config
+  - Pre-commit hook: language detection, failure modes, structure
+- Update Makefile: `make test` runs bats test suite
+
 ## 2.4.0
 
 - Enrich `project.yaml` with `description`, `stack`,
