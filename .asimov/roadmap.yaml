@@ -1,4 +1,18 @@
 # Asimov Roadmap
 # See CHANGELOG.md for release history.
 
-current: {}
+current:
+  v2.8.0:
+    title: "curl installer"
+    status: pending
+    deliverables:
+      - "curl -fsSL one-liner that downloads latest release from GitHub"
+      - "Install script: fetch tarball, copy bin/asimov to PATH, verify deps"
+      - "Update README install section with one-liner"
+  v2.9.0:
+    title: "self-update command"
+    status: pending
+    deliverables:
+      - "asimov update — fetch latest release from GitHub, replace in-place"
+      - "Version check: compare current vs latest, skip if up-to-date"
+      - "Tests for update command"
