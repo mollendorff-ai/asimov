@@ -33,6 +33,13 @@ starts aligned, not blank.
 ## Install
 
 ```bash
+ASIMOV=https://raw.githubusercontent.com
+curl -fsSL $ASIMOV/mollendorff-ai/asimov/main/install.sh | bash
+```
+
+Or clone and install manually:
+
+```bash
 git clone https://github.com/mollendorff-ai/asimov.git
 cd asimov
 make install

@@ -6,8 +6,8 @@ current:
   title: "curl installer"
   status: pending
   deliverables:
-    - "curl -fsSL one-liner that downloads latest release from GitHub"
-    - "Install script: fetch tarball, copy bin/asimov to PATH, verify deps"
+    - "install.sh: curl raw files from GitHub, copy to ~/.local/{bin,share/asimov}, chmod, verify deps"
+    - "One-liner: curl -fsSL ...install.sh | bash"
     - "Update README install section with one-liner"
 
 previous:
