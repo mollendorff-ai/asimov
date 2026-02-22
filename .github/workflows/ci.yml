@@ -34,4 +34,20 @@ jobs:
         run: |
           sudo apt-get install -y bats
       - name: Run tests
-        run: make test
+        run: make test | tee test-output.txt
+      - name: Update test badge
+        if: github.ref == 'refs/heads/main' && always()
+        run: |
+          COUNT=$(grep -c '^ok ' test-output.txt || echo 0)
+          FAIL=$(grep -c '^not ok ' test-output.txt || echo 0)
+          if [ "$FAIL" -gt 0 ]; then
+            MSG="${COUNT} passing, ${FAIL} failing"
+            COLOR="red"
+          else
+            MSG="${COUNT} passing"
+            COLOR="brightgreen"
+          fi
+          curl -s -X PATCH \
+            -H "Authorization: token ${{ secrets.GIST_TOKEN }}" \
+            -d "{\"files\":{\"tests.json\":{\"content\":\"{\\\"schemaVersion\\\":1,\\\"label\\\":\\\"tests\\\",\\\"message\\\":\\\"${MSG}\\\",\\\"color\\\":\\\"${COLOR}\\\"}\"}}}" \
+            https://api.github.com/gists/c99beaff02a1895916d78b8d2a8ad79d

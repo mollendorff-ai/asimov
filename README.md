@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/mollendorff-ai/asimov/actions/workflows/ci.yml/badge.svg)](https://github.com/mollendorff-ai/asimov/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-85_passing-brightgreen)](https://github.com/mollendorff-ai/asimov)
+[![Tests](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/lctavares/c99beaff02a1895916d78b8d2a8ad79d/raw/tests.json)](https://github.com/mollendorff-ai/asimov/actions/workflows/ci.yml)
 
 **AI session orchestration for coding CLIs** — protocols,
 quality gates, and roadmap warmup.
