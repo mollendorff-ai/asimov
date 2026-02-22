@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/mollendorff-ai/asimov/actions/workflows/ci.yml/badge.svg)](https://github.com/mollendorff-ai/asimov/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-78_passing-brightgreen)](https://github.com/mollendorff-ai/asimov)
+[![Tests](https://img.shields.io/badge/tests-85_passing-brightgreen)](https://github.com/mollendorff-ai/asimov)
 
 **AI session orchestration for coding CLIs** — protocols,
 quality gates, and roadmap warmup.
@@ -77,6 +77,8 @@ launch:
       - --dangerously-skip-permissions
     env:
       MAX_THINKING_TOKENS: "1000000"
+      CLAUDE_CODE_EFFORT_LEVEL: "max"
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
 
   gemini:
     args:
@@ -86,6 +88,27 @@ launch:
     args:
       - --full-auto
 ```
+
+### Why these defaults
+
+**Claude Code** — max autonomy, max brainpower:
+
+- `--dangerously-skip-permissions` — zero tool-approval prompts ([docs][cc-perms])
+- `MAX_THINKING_TOKENS` — full extended thinking budget ([docs][cc-think])
+- `CLAUDE_CODE_EFFORT_LEVEL: max` — deepest exploration and reasoning ([docs][cc-settings])
+- `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 1` — multi-agent coordination ([docs][cc-teams])
+
+**Gemini CLI** — autonomous mode:
+
+- `--yolo` — skip all confirmations ([docs][gem-cli])
+
+**Codex CLI** — autonomous mode:
+
+- `--full-auto` — no approval prompts ([docs][codex-cli])
+
+Asimov ships with everything cranked to 11. These are CLI tools
+for engineers who know what they're doing, not chatbots for
+casual users. Every setting removes friction or increases capability.
 
 Per-project overrides go in `.asimov/launch.yaml`
 (same format, project wins on conflicts).
@@ -121,9 +144,16 @@ prohibited. If checks fail, the AI must fix the code.
 
 ```bash
 make lint    # shellcheck on all shell scripts
-make test    # bats test suite (78 tests)
+make test    # bats test suite (85 tests)
 ```
 
 ## License
 
 [MIT](LICENSE)
+
+[cc-perms]: https://code.claude.com/docs/en/permissions
+[cc-think]: https://code.claude.com/docs/en/settings
+[cc-settings]: https://code.claude.com/docs/en/settings
+[cc-teams]: https://code.claude.com/docs/en/agent-teams
+[gem-cli]: https://google-gemini.github.io/gemini-cli/docs/get-started/configuration.html
+[codex-cli]: https://developers.openai.com/codex/cli/reference/

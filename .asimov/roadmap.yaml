@@ -2,14 +2,14 @@
 # See CHANGELOG.md for release history.
 
 current:
-  v2.8.0:
+  v2.9.0:
     title: "curl installer"
     status: pending
     deliverables:
       - "curl -fsSL one-liner that downloads latest release from GitHub"
       - "Install script: fetch tarball, copy bin/asimov to PATH, verify deps"
       - "Update README install section with one-liner"
-  v2.9.0:
+  v2.10.0:
     title: "self-update command"
     status: pending
     deliverables:

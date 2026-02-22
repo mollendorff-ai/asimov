@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.8.0
+
+- Add `CLAUDE_CODE_EFFORT_LEVEL: max` and
+  `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 1` to default
+  global config (new installs get both automatically)
+- Auto-migrate existing `~/.asimov/config.yaml`: inject
+  missing env vars without overwriting user customizations
+- Add "Why these defaults" section to README explaining
+  all launch settings for Claude Code, Gemini CLI, Codex CLI
+- 7 new bats tests for global config migration (85 total)
+
 ## 2.7.0
 
 - Reframe README: lead with the problem (AI sessions
