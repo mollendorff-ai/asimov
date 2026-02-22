@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.9.0
+
+- Roadmap format: single `current` milestone, add `previous`
+  and `backlog` fields (aligned with old Rust schema)
+- Sprint protocol: full lifecycle — on completion, update
+  roadmap, append to CHANGELOG.md, discuss next from backlog
+- Init template generates new roadmap format with `backlog: []`
+
 ## 2.8.0
 
 - Add `CLAUDE_CODE_EFFORT_LEVEL: max` and

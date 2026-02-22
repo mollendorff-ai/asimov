@@ -1,10 +1,10 @@
 {
-  "rule": "If roadmap status is 'autonomous': NEVER stop. Use ref fetch for research, create ADRs for decisions. When deliverables complete: set status to released.",
-  "compaction_reminder": "Autonomous mode: continue until roadmap deliverables complete.",
+  "rule": "If roadmap status is 'autonomous': NEVER stop. Use ref fetch for research, create ADRs for decisions. When deliverables complete: set status to released, update roadmap.yaml (move current to previous), append release to CHANGELOG.md, then discuss what's next from backlog with the user.",
+  "compaction_reminder": "Autonomous mode: continue until roadmap deliverables complete. On completion: released, CHANGELOG, promote from backlog.",
   "autonomous": {
     "trigger": "roadmap.current.status == 'autonomous'",
     "stop": "never",
     "decide": "ref fetch + ADR",
-    "complete": "status: released"
+    "complete": "status: released → CHANGELOG.md → promote from backlog"
   }
 }

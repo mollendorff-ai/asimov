@@ -3,7 +3,7 @@
 # Vendor-neutral launcher for Claude Code, Gemini CLI, Codex CLI
 set -euo pipefail
 
-ASIMOV_VERSION="2.8.0"
+ASIMOV_VERSION="2.9.0"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
 ASIMOV_PROJECT_CONFIG=".asimov/launch.yaml"
@@ -318,11 +318,13 @@ YAML
     cat > .asimov/roadmap.yaml << 'YAML'
 current:
   version: "0.1.0"
-  status: in_progress
-  summary: "Initial setup"
+  title: "Initial setup"
+  status: pending
   deliverables:
     - "Define project goals"
     - "Set up development environment"
+
+backlog: []
 YAML
 
     # Install pre-commit hook
