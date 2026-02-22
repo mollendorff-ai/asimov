@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.10.0
+
+- Add `install.sh`: curl one-liner installs asimov from
+  GitHub without cloning (bin, protocols, pre-commit hook)
+- Update README with curl install method
+
 ## 2.9.0
 
 - Roadmap format: single `current` milestone, add `previous`

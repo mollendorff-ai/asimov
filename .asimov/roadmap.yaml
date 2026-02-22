@@ -2,17 +2,16 @@
 # See CHANGELOG.md for release history.
 
 current:
-  version: "2.10.0"
-  title: "curl installer"
+  version: "2.11.0"
+  title: "self-update command"
   status: pending
   deliverables:
-    - "install.sh: curl raw files from GitHub, copy to ~/.local/{bin,share/asimov}, chmod, verify deps"
-    - "One-liner: curl -fsSL ...install.sh | bash"
-    - "Update README install section with one-liner"
+    - "asimov update — fetch latest release from GitHub, replace in-place"
+    - "Version check: compare current vs latest, skip if up-to-date"
+    - "Tests for update command"
 
 previous:
-  version: "2.9.0"
-  title: "roadmap lifecycle + sprint protocol"
+  version: "2.10.0"
+  title: "curl installer"
 
-backlog:
-  - "self-update command (asimov update)"
+backlog: []
