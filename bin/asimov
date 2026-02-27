@@ -3,7 +3,7 @@
 # Vendor-neutral launcher for Claude Code, Gemini CLI, Codex CLI
 set -euo pipefail
 
-ASIMOV_VERSION="2.10.0"
+ASIMOV_VERSION="2.11.0"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
 ASIMOV_PROJECT_CONFIG=".asimov/launch.yaml"
@@ -463,6 +463,49 @@ cmd_migrate() {
     fi
 }
 
+# ─── Update ───────────────────────────────────────────────────────────────
+
+cmd_update() {
+    local repo="https://raw.githubusercontent.com/mollendorff-ai/asimov/main"
+    local bin_path
+    bin_path="$(realpath "$0")"
+
+    echo "Checking for updates..."
+    local latest_script
+    latest_script="$(curl -fsSL "${repo}/bin/asimov")" || {
+        echo "update: failed to fetch latest release" >&2; exit 1
+    }
+    local latest_version
+    latest_version="$(printf '%s\n' "$latest_script" | grep '^ASIMOV_VERSION=' | head -1 | cut -d'"' -f2)"
+    if [ -z "$latest_version" ]; then
+        echo "update: could not determine latest version" >&2; exit 1
+    fi
+
+    if [ "$latest_version" = "$ASIMOV_VERSION" ]; then
+        echo "Already up to date. (v${ASIMOV_VERSION})"
+        return 0
+    fi
+
+    echo "Updating asimov v${ASIMOV_VERSION} → v${latest_version}..."
+
+    # Replace binary atomically
+    local tmp; tmp="$(mktemp)"
+    printf '%s\n' "$latest_script" > "$tmp"
+    chmod +x "$tmp"
+    mv "$tmp" "$bin_path"
+
+    # Update protocols
+    for f in freshness.json sycophancy.json sprint.json coding-standards.json; do
+        curl -fsSL "${repo}/protocols/${f}" -o "${DATA_DIR}/protocols/${f}"
+    done
+
+    # Update pre-commit hook
+    curl -fsSL "${repo}/hooks/pre-commit" -o "${DATA_DIR}/hooks/pre-commit"
+    chmod +x "${DATA_DIR}/hooks/pre-commit"
+
+    echo "Updated to v${latest_version}."
+}
+
 # ─── Help ────────────────────────────────────────────────────────────────
 
 show_help() {
@@ -473,6 +516,7 @@ USAGE:
     asimov              Launch AI CLI with protocols (default)
     asimov init [name]  Initialize .asimov/ in current project
     asimov migrate      Update .asimov/ to latest format
+    asimov update       Fetch the latest release from GitHub and replace in-place
     asimov --help       Show this help
     asimov --version    Show version
 
@@ -503,6 +547,7 @@ EOF
 case "${1:-}" in
     init)       shift; cmd_init "$@" ;;
     migrate)    cmd_migrate ;;
+    update)     cmd_update ;;
     --help|-h)  show_help ;;
     --version)  echo "asimov ${ASIMOV_VERSION}" ;;
     "")         launch_ai ;;

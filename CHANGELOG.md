@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.11.0
+
+- Add `asimov update`: fetch latest release from GitHub, replace binary
+  and protocols in-place; skips if already up-to-date
+- Update README with `asimov update` command
+- 10 new bats tests for update command (95 total)
+
 ## 2.10.0
 
 - Add `install.sh`: curl one-liner installs asimov from

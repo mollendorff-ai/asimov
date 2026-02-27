@@ -54,6 +54,7 @@ Requires `yq` and `jq` (`brew install yq jq`).
 cd your-project
 asimov init        # scaffold .asimov/, install pre-commit hook
 asimov             # launch AI with protocols + roadmap warmup
+asimov update      # update asimov to the latest release
 ```
 
 `asimov init` creates:

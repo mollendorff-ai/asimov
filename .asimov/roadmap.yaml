@@ -1,17 +1,10 @@
 # Asimov Roadmap
 # See CHANGELOG.md for release history.
 
-current:
-  version: "2.11.0"
-  title: "self-update command"
-  status: pending
-  deliverables:
-    - "asimov update — fetch latest release from GitHub, replace in-place"
-    - "Version check: compare current vs latest, skip if up-to-date"
-    - "Tests for update command"
+current: ~
 
 previous:
-  version: "2.10.0"
-  title: "curl installer"
+  version: "2.11.0"
+  title: "self-update command"
 
 backlog: []
