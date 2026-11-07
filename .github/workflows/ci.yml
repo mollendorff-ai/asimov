@@ -19,6 +19,8 @@ jobs:
         uses: ludeeus/action-shellcheck@master
         with:
           scandir: hooks
+      - name: ShellCheck install.sh
+        run: shellcheck install.sh
 
   test:
     runs-on: ubuntu-latest
@@ -51,3 +53,29 @@ jobs:
             -H "Authorization: token ${{ secrets.GIST_TOKEN }}" \
             -d "{\"files\":{\"tests.json\":{\"content\":\"{\\\"schemaVersion\\\":1,\\\"label\\\":\\\"tests\\\",\\\"message\\\":\\\"${MSG}\\\",\\\"color\\\":\\\"${COLOR}\\\"}\"}}}" \
             https://api.github.com/gists/c99beaff02a1895916d78b8d2a8ad79d
+
+  # Tags and publishes a release when ASIMOV_VERSION in bin/asimov changes on
+  # main and that version has no tag yet. `asimov update` and install.sh only
+  # install tagged releases, verified against the SHA256SUMS attached here.
+  release:
+    needs: [lint, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release new version if untagged
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(grep '^ASIMOV_VERSION=' bin/asimov | cut -d'"' -f2)
+          TAG="v${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists; nothing to do."
+            exit 0
+          fi
+          sha256sum bin/asimov hooks/pre-commit protocols/*.json > SHA256SUMS
+          awk -v v="## ${VERSION}" '$0==v{p=1;next} /^## /{p=0} p' CHANGELOG.md > notes.md
+          gh release create "$TAG" SHA256SUMS --target "$GITHUB_SHA" \
+            --title "$TAG" --notes-file notes.md

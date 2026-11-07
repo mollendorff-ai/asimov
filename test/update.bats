@@ -5,158 +5,146 @@ load test_helper
 setup() {
     setup_tmpdir
 
-    # Create a writable copy of the asimov binary for update to replace
+    # Writable copy of the asimov binary for update to replace
     ASIMOV_COPY="${TEST_TMPDIR}/bin/asimov"
     mkdir -p "${TEST_TMPDIR}/bin"
     cp "$ASIMOV_BIN" "$ASIMOV_COPY"
     chmod +x "$ASIMOV_COPY"
+    CURRENT_VERSION="$(grep '^ASIMOV_VERSION=' "$ASIMOV_BIN" | cut -d'"' -f2)"
 
-    # Set ASIMOV_DATA to a temp location with protocols/ and hooks/ dirs
+    # Installed data dir that update writes into
     export ASIMOV_DATA="${TEST_TMPDIR}/data"
     mkdir -p "${ASIMOV_DATA}/protocols" "${ASIMOV_DATA}/hooks"
 
-    # Mock bin directory
     MOCK_DIR="${TEST_TMPDIR}/mocks"
     mkdir -p "$MOCK_DIR"
     export PATH="${MOCK_DIR}:${PATH}"
+
+    # Fake release tree served by the curl mock
+    RELEASE_DIR="${TEST_TMPDIR}/release"
 }
 
 teardown() {
     teardown_tmpdir
 }
 
-# Create a curl mock that returns a fake asimov script with the given version
-mock_curl_version() {
+# Build a fake release for the given version, with a matching SHA256SUMS
+make_release() {
     local version="$1"
+    mkdir -p "${RELEASE_DIR}/bin" "${RELEASE_DIR}/hooks" "${RELEASE_DIR}/protocols"
+    printf 'ASIMOV_VERSION="%s"\n# fake asimov binary\n' "$version" > "${RELEASE_DIR}/bin/asimov"
+    echo '#!/bin/bash' > "${RELEASE_DIR}/hooks/pre-commit"
+    for f in freshness.json sycophancy.json sprint.json coding-standards.json; do
+        echo "{\"rule\": \"${f} v${version}\"}" > "${RELEASE_DIR}/protocols/${f}"
+    done
+    local sha="sha256sum"
+    command -v sha256sum &>/dev/null || sha="shasum -a 256"
+    (cd "$RELEASE_DIR" && $sha bin/asimov hooks/pre-commit protocols/*.json > SHA256SUMS)
+    echo "v${version}" > "${RELEASE_DIR}/TAG"
+}
+
+# curl mock: latest-release API, SHA256SUMS asset and raw files at the tag
+mock_curl_release() {
     cat > "${MOCK_DIR}/curl" << CURL_EOF
 #!/usr/bin/env bash
-# Detect -o flag for file downloads
 output=""
 args=("\$@")
 for ((i=0; i<\${#args[@]}; i++)); do
-    if [[ "\${args[i]}" == "-o" ]]; then
-        output="\${args[i+1]}"
-        break
-    fi
+    [[ "\${args[i]}" == "-o" ]] && output="\${args[i+1]}"
+    [[ "\${args[i]}" == http* ]] && url="\${args[i]}"
 done
-
-# Last positional arg is the URL
-url="\${args[-1]}"
-
-if [[ "\$url" == */bin/asimov ]]; then
-    # Return a fake asimov script with the requested version
-    echo 'ASIMOV_VERSION="${version}"'
-    echo '# fake asimov binary'
-elif [[ -n "\$output" ]]; then
-    # Protocol/hook download -- create the file
-    touch "\$output"
-else
-    exit 1
-fi
+tag="\$(cat "${RELEASE_DIR}/TAG")"
+case "\$url" in
+    */releases/latest) echo "{\"tag_name\": \"\${tag}\"}" ;;
+    */releases/download/*/SHA256SUMS) cp "${RELEASE_DIR}/SHA256SUMS" "\$output" ;;
+    */\${tag}/*) cp "${RELEASE_DIR}/\${url##*/\${tag}/}" "\$output" ;;
+    *) exit 1 ;;
+esac
 CURL_EOF
     chmod +x "${MOCK_DIR}/curl"
 }
 
-# Create a curl mock that always fails
 mock_curl_fail() {
-    cat > "${MOCK_DIR}/curl" << 'CURL_EOF'
-#!/usr/bin/env bash
-exit 1
-CURL_EOF
-    chmod +x "${MOCK_DIR}/curl"
-}
-
-# Create a curl mock that returns content with no ASIMOV_VERSION line
-mock_curl_no_version() {
-    cat > "${MOCK_DIR}/curl" << 'CURL_EOF'
-#!/usr/bin/env bash
-# Return content with no parseable version
-echo '# no version here'
-echo 'echo hello'
-CURL_EOF
+    printf '#!/usr/bin/env bash\nexit 1\n' > "${MOCK_DIR}/curl"
     chmod +x "${MOCK_DIR}/curl"
 }
 
 # ─── Already up to date ─────────────────────────────────────────────────
 
-@test "update prints 'Already up to date' when versions match" {
-    mock_curl_version "2.11.0"
-    run "$ASIMOV_COPY" update
-    [[ "$output" == *"Already up to date. (v2.11.0)"* ]]
-}
-
-@test "update exits 0 when versions match" {
-    mock_curl_version "2.11.0"
+@test "update prints 'Already up to date' when latest tag matches" {
+    make_release "$CURRENT_VERSION"
+    mock_curl_release
     run "$ASIMOV_COPY" update
     [ "$status" -eq 0 ]
+    [[ "$output" == *"Already up to date. (v${CURRENT_VERSION})"* ]]
 }
 
 # ─── Upgrade path ────────────────────────────────────────────────────────
 
-@test "update replaces binary when newer version available" {
-    local before
-    before="$(cat "$ASIMOV_COPY")"
-    mock_curl_version "2.12.0"
+@test "update replaces binary with the tagged release" {
+    make_release "99.0.0"
+    mock_curl_release
     run "$ASIMOV_COPY" update
     [ "$status" -eq 0 ]
-    local after
-    after="$(cat "$ASIMOV_COPY")"
-    [ "$before" != "$after" ]
+    grep -q 'ASIMOV_VERSION="99.0.0"' "$ASIMOV_COPY"
+    [ -x "$ASIMOV_COPY" ]
 }
 
-@test "update downloads all 4 protocol files when upgrade needed" {
-    mock_curl_version "2.12.0"
+@test "update installs all 4 protocols and the hook" {
+    make_release "99.0.0"
+    mock_curl_release
     run "$ASIMOV_COPY" update
     [ "$status" -eq 0 ]
-    [ -f "${ASIMOV_DATA}/protocols/freshness.json" ]
-    [ -f "${ASIMOV_DATA}/protocols/sycophancy.json" ]
-    [ -f "${ASIMOV_DATA}/protocols/sprint.json" ]
-    [ -f "${ASIMOV_DATA}/protocols/coding-standards.json" ]
-}
-
-@test "update downloads pre-commit hook when upgrade needed" {
-    mock_curl_version "2.12.0"
-    run "$ASIMOV_COPY" update
-    [ "$status" -eq 0 ]
-    [ -f "${ASIMOV_DATA}/hooks/pre-commit" ]
-}
-
-@test "update hook is executable after update" {
-    mock_curl_version "2.12.0"
-    run "$ASIMOV_COPY" update
-    [ "$status" -eq 0 ]
+    for f in freshness.json sycophancy.json sprint.json coding-standards.json; do
+        grep -q "v99.0.0" "${ASIMOV_DATA}/protocols/${f}"
+    done
     [ -x "${ASIMOV_DATA}/hooks/pre-commit" ]
 }
 
-@test "update prints transition message vOLD → vNEW" {
-    mock_curl_version "2.12.0"
+@test "update prints transition message and migrate reminder" {
+    make_release "99.0.0"
+    mock_curl_release
     run "$ASIMOV_COPY" update
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"Updating asimov v2.11.0 → v2.12.0"* ]]
-    [[ "$output" == *"Updated to v2.12.0."* ]]
+    [[ "$output" == *"Updating asimov v${CURRENT_VERSION} → v99.0.0"* ]]
+    [[ "$output" == *"Updated to v99.0.0."* ]]
+    [[ "$output" == *"asimov migrate"* ]]
+}
+
+# ─── Verification ────────────────────────────────────────────────────────
+
+@test "update refuses a file whose checksum does not match" {
+    make_release "99.0.0"
+    echo "tampered" >> "${RELEASE_DIR}/hooks/pre-commit"
+    mock_curl_release
+    local before; before="$(cat "$ASIMOV_COPY")"
+    run "$ASIMOV_COPY" update
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"checksum mismatch for hooks/pre-commit"* ]]
+    [ "$(cat "$ASIMOV_COPY")" = "$before" ]
+    [ ! -f "${ASIMOV_DATA}/hooks/pre-commit" ]
+}
+
+@test "update refuses a file missing from SHA256SUMS" {
+    make_release "99.0.0"
+    grep -v 'sprint.json' "${RELEASE_DIR}/SHA256SUMS" > "${RELEASE_DIR}/S" && mv "${RELEASE_DIR}/S" "${RELEASE_DIR}/SHA256SUMS"
+    mock_curl_release
+    run "$ASIMOV_COPY" update
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"checksum mismatch for protocols/sprint.json"* ]]
 }
 
 # ─── Error paths ─────────────────────────────────────────────────────────
 
-@test "update exits 1 if curl fails to fetch binary" {
+@test "update exits 1 if the latest release cannot be fetched" {
     mock_curl_fail
     run "$ASIMOV_COPY" update
     [ "$status" -eq 1 ]
     [[ "$output" == *"failed to fetch latest release"* ]]
 }
 
-@test "update exits 1 if version cannot be parsed from response" {
-    mock_curl_no_version
-    run "$ASIMOV_COPY" update
-    [ "$status" -ne 0 ]
-}
-
-# ─── Dispatcher ──────────────────────────────────────────────────────────
-
 @test "update command is recognized by asimov dispatcher" {
-    mock_curl_version "2.11.0"
+    make_release "$CURRENT_VERSION"
+    mock_curl_release
     run "$ASIMOV_COPY" update
-    [ "$status" -eq 0 ]
-    # Should NOT get "Unknown command" error
     [[ "$output" != *"Unknown command"* ]]
 }
