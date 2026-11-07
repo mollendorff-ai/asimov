@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.1.0
+
+- `asimov status`: one view of tools (yq flavour, jq, AI CLIs, ref,
+  pandoc), config (default AI, `build.sandbox`), the project (protocols,
+  description, roadmap, pre-commit hook up to date, `BLOCKED.md`) and a
+  build in the folder (phase, stop reason, spend against the cap, released
+  milestones per project); lists issues with their fix
+- `asimov config get|set|unset|path [--project]`: read and change
+  `~/.asimov/config.yaml` or `.asimov/launch.yaml` with dotted keys; values
+  are YAML, so booleans, numbers and lists keep their type
+- Tests: 161 (17 new)
+
 ## 3.0.0
 
 - Build mode is complete: after scaffolding, each project is built

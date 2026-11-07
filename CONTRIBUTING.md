@@ -22,7 +22,7 @@ Both must pass before submitting a PR.
 ## Project structure
 
 ```text
-bin/asimov           # main CLI (~1,350 lines bash)
+bin/asimov           # main CLI (~1,550 lines bash)
 hooks/pre-commit     # quality gate (~370 lines bash)
 protocols/*.json     # behavioral protocols (4 files)
 test/*.bats          # bats test suite

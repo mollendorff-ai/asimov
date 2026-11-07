@@ -65,6 +65,8 @@ asimov             # launch the AI with protocols + roadmap warmup
 asimov migrate     # bring an older .asimov/ up to date
 asimov update      # install the latest tagged release
 asimov build <spec>  # specs to finished repos, unattended
+asimov status      # check tools, config, project and build in one view
+asimov config set build.sandbox true   # change config without editing YAML
 ```
 
 `asimov init` creates:
@@ -170,6 +172,11 @@ launch:
     args:
       - --full-auto
 ```
+
+Change any setting with `asimov config set <key> <value>` (keys use dots,
+values are YAML, so `true`, `3` and `[--a, --b]` keep their type); add
+`--project` to write `.asimov/launch.yaml` instead. `asimov config get`
+prints the file or one value; `asimov config unset` removes a key.
 
 Per-project overrides go in `.asimov/launch.yaml`, same format. For each
 setting (`model`, `args`, `env`), a project value replaces the global one

@@ -3,7 +3,7 @@
 # Personal tool, built for sandboxed environments. Claude Code, Gemini CLI, Codex CLI.
 set -euo pipefail
 
-ASIMOV_VERSION="3.0.0"
+ASIMOV_VERSION="3.1.0"
 ASIMOV_REPO="mollendorff-ai/asimov"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
@@ -1303,6 +1303,221 @@ Design: docs/design/build-mode.md
 EOF
 }
 
+# ─── Status ──────────────────────────────────────────────────────────────
+
+STATUS_ISSUES=0
+
+st_ok()    { printf '  ok    %s\n' "$1"; }
+st_warn()  { printf '  !     %s\n' "$1"; STATUS_ISSUES=$((STATUS_ISSUES + 1)); }
+st_info()  { printf '  -     %s\n' "$1"; }
+
+cmd_status() {
+    echo "asimov ${ASIMOV_VERSION}"
+    echo ""
+    echo "Tools:"
+    if ! command -v yq &>/dev/null; then
+        st_warn "yq missing (brew install yq)"
+    elif ! yq --version 2>&1 | grep -qi mikefarah; then
+        st_warn "yq is not mikefarah/yq v4: $(yq --version 2>&1 | head -1)"
+    else
+        st_ok "yq $(yq --version 2>&1 | grep -o 'v[0-9][0-9.]*' | head -1)"
+    fi
+    if command -v jq &>/dev/null; then st_ok "jq"; else st_warn "jq missing (brew install jq)"; fi
+    local cli any_ai=0
+    for cli in claude gemini codex; do
+        if command -v "$cli" &>/dev/null; then st_ok "$cli"; any_ai=1; fi
+    done
+    [ "$any_ai" -eq 1 ] || st_warn "no AI CLI found (claude, gemini or codex)"
+    if command -v ref &>/dev/null; then
+        st_ok "ref (PDF and URL specs, link checks)"
+    else
+        st_info "ref not installed (needed for PDF and URL specs)"
+    fi
+    if command -v pandoc &>/dev/null; then
+        st_ok "pandoc (.docx specs)"
+    else
+        st_info "pandoc not installed (needed for .docx specs)"
+    fi
+
+    # Everything below reads YAML; stop here if yq is unusable
+    if ! command -v yq &>/dev/null || ! yq --version 2>&1 | grep -qi mikefarah; then
+        echo ""
+        echo "${STATUS_ISSUES} issue(s)."
+        return 0
+    fi
+
+    echo ""
+    echo "Config:"
+    if [ -f "$ASIMOV_GLOBAL_CONFIG" ]; then
+        local dai bai sandbox
+        dai="$(cfg_get "$ASIMOV_GLOBAL_CONFIG" '.launch.default_ai')"
+        st_ok "${ASIMOV_GLOBAL_CONFIG} (default AI: ${dai:-not set})"
+        if [ -n "$dai" ] && ! command -v "$dai" &>/dev/null; then
+            st_warn "default AI '${dai}' is not installed"
+        fi
+        bai="$(cfg_get "$ASIMOV_GLOBAL_CONFIG" '.build.default_ai')"
+        [ -n "$bai" ] && st_info "build AI: ${bai}"
+        sandbox="$(cfg_get "$ASIMOV_GLOBAL_CONFIG" '.build.sandbox')"
+        if [ "$sandbox" = "true" ]; then
+            st_ok "build.sandbox: true"
+        else
+            st_info "build.sandbox not set (build mode refuses to run until it is)"
+        fi
+    else
+        st_info "no ${ASIMOV_GLOBAL_CONFIG} yet (created on first launch)"
+    fi
+    [ -f "$ASIMOV_PROJECT_CONFIG" ] && st_ok "project overrides: ${ASIMOV_PROJECT_CONFIG}"
+
+    echo ""
+    echo "Project:"
+    if [ -d .asimov ]; then
+        local f missing=()
+        for f in "${ASIMOV_PROTOCOLS[@]}"; do
+            [ -f ".asimov/${f}" ] || missing+=("$f")
+        done
+        if [ ${#missing[@]} -eq 0 ]; then
+            st_ok "protocols: ${#ASIMOV_PROTOCOLS[@]} of ${#ASIMOV_PROTOCOLS[@]}"
+        else
+            st_warn "missing protocols: ${missing[*]} (asimov migrate)"
+        fi
+        local desc
+        desc="$(cfg_get .asimov/project.yaml '.description')"
+        if [ -z "$desc" ] || [ "$desc" = "TODO: describe your project" ]; then
+            st_warn "project.yaml has no description"
+        else
+            st_ok "project: $(cfg_get .asimov/project.yaml '.identity.name')"
+        fi
+        if [ -f .asimov/roadmap.yaml ]; then
+            st_ok "roadmap: $(cfg_get .asimov/roadmap.yaml '.current.version') $(cfg_get .asimov/roadmap.yaml '.current.title') [$(cfg_get .asimov/roadmap.yaml '.current.status')]"
+        else
+            st_warn "no .asimov/roadmap.yaml"
+        fi
+        if [ -d .git ]; then
+            if [ ! -x .git/hooks/pre-commit ]; then
+                st_warn "pre-commit hook not installed (asimov migrate)"
+            elif [ -f "${DATA_DIR}/hooks/pre-commit" ] && ! cmp -s .git/hooks/pre-commit "${DATA_DIR}/hooks/pre-commit"; then
+                st_warn "pre-commit hook is out of date (asimov migrate)"
+            else
+                st_ok "pre-commit hook up to date"
+            fi
+        else
+            st_info "not a git repo (no pre-commit hook)"
+        fi
+        [ -f BLOCKED.md ] && st_warn "BLOCKED.md: $(head -1 BLOCKED.md)"
+    else
+        st_info "no .asimov/ here (asimov init)"
+    fi
+
+    if [ -f .asimov-build/state.yaml ]; then
+        local sf=.asimov-build/state.yaml phase
+        phase="$(cfg_get "$sf" '.phase')"
+        echo ""
+        echo "Build:"
+        st_info "phase: ${phase} (AI: $(cfg_get "$sf" '.ai'))"
+        [ "$phase" = "stopped" ] && st_warn "stopped: $(cfg_get "$sf" '.stop_reason') (asimov resume)"
+        [ "$phase" = "awaiting_approval" ] && st_info "waiting for: asimov approve"
+        local spent
+        spent="$(cfg_get "$sf" '.spent_usd')"
+        [ -n "$spent" ] && st_info "spent: \$${spent}$(v="$(cfg_get "$sf" '.caps.max_usd')"; [ -n "$v" ] && echo " of \$${v}")"
+        if [ -f .asimov-build/plan.yaml ]; then
+            local name total done_n runs
+            while IFS= read -r name; do
+                [ -z "$name" ] && continue
+                total="$(yq ".projects[] | select(.name == \"${name}\") | .milestones | length" .asimov-build/plan.yaml)"
+                done_n="$(cfg_get "$sf" ".projects[\"${name}\"].milestone")"
+                runs="$(cfg_get "$sf" ".projects[\"${name}\"].loops")"
+                st_info "${name}: ${done_n:-0} of ${total} milestones released, ${runs:-0} runs"
+            done < <(yq -r '.projects[].name' .asimov-build/plan.yaml)
+        fi
+    fi
+
+    echo ""
+    if [ "$STATUS_ISSUES" -eq 0 ]; then
+        echo "No issues."
+    else
+        echo "${STATUS_ISSUES} issue(s)."
+    fi
+}
+
+# ─── Config ──────────────────────────────────────────────────────────────
+
+# a.b-c.d -> .["a"]["b-c"]["d"]
+config_path() {
+    local key="$1" out="" part
+    [[ "$key" =~ ^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$ ]] || {
+        echo "config: bad key '${key}' (use dots, e.g. launch.claude.model)" >&2; exit 1; }
+    local IFS='.'
+    for part in $key; do
+        out="${out}[\"${part}\"]"
+    done
+    printf '.%s' "$out"
+}
+
+cmd_config() {
+    check_deps
+    local action="${1:-}" file="$ASIMOV_GLOBAL_CONFIG" args=() a
+    [ $# -gt 0 ] && shift
+    for a in "$@"; do
+        if [ "$a" = "--project" ]; then
+            file="$ASIMOV_PROJECT_CONFIG"
+        else
+            args+=("$a")
+        fi
+    done
+    if [ "$file" = "$ASIMOV_PROJECT_CONFIG" ] && [ ! -d .asimov ]; then
+        echo "config: no .asimov/ here; run asimov init first" >&2; exit 1
+    fi
+    case "$action" in
+        get)
+            [ -f "$file" ] || { echo "config: ${file} does not exist" >&2; exit 1; }
+            if [ ${#args[@]} -eq 0 ]; then
+                cat "$file"
+            else
+                local path
+                path="$(config_path "${args[0]}")"
+                local out
+                out="$(yq -e "$path" "$file" 2>/dev/null)" || { echo "config: ${args[0]} is not set" >&2; exit 1; }
+                printf '%s\n' "$out"
+            fi ;;
+        set)
+            [ ${#args[@]} -eq 2 ] || { echo "usage: asimov config set <key> <value> [--project]" >&2; exit 1; }
+            local path
+            path="$(config_path "${args[0]}")"
+            if [ "$file" = "$ASIMOV_GLOBAL_CONFIG" ]; then
+                ensure_global_config >/dev/null
+            fi
+            [ -f "$file" ] || echo "{}" > "$file"
+            # The value is read as YAML: true, 3, [a, b] and {k: v} keep their type
+            VAL="${args[1]}" yq -i "${path} = env(VAL)" "$file" \
+                || { echo "config: could not set ${args[0]}" >&2; exit 1; }
+            echo "${args[0]} = $(yq -o=json -I=0 "$path" "$file")  (${file})" ;;
+        unset)
+            [ ${#args[@]} -eq 1 ] || { echo "usage: asimov config unset <key> [--project]" >&2; exit 1; }
+            [ -f "$file" ] || { echo "config: ${file} does not exist" >&2; exit 1; }
+            local path
+            path="$(config_path "${args[0]}")"
+            yq -i "del(${path})" "$file"
+            echo "${args[0]} removed  (${file})" ;;
+        path)
+            echo "$file" ;;
+        *)
+            cat << 'EOF'
+usage:
+    asimov config get [key] [--project]     print the config, or one value
+    asimov config set <key> <value> [--project]
+    asimov config unset <key> [--project]
+    asimov config path [--project]
+
+Keys use dots: launch.default_ai, launch.claude.model, build.sandbox,
+build.claude.env.CLAUDE_CODE_EFFORT_LEVEL. Values are YAML: true, 3,
+"text", [--a, --b]. --project edits .asimov/launch.yaml instead of
+~/.asimov/config.yaml.
+EOF
+            [ -z "$action" ] && return 0
+            exit 1 ;;
+    esac
+}
+
 # ─── Help ────────────────────────────────────────────────────────────────
 
 show_help() {
@@ -1317,6 +1532,8 @@ USAGE:
     asimov build <spec>...  Plan projects from specs, stop for approval, scaffold
     asimov approve [dir]    Approve a build plan, scaffold and build
     asimov resume [dir]     Continue a stopped build (asimov build --help)
+    asimov status       Check tools, config, project and build; list issues
+    asimov config ...   Read or change config without editing YAML (asimov config)
     asimov --help       Show this help
     asimov --version    Show version
 
@@ -1351,6 +1568,8 @@ case "${1:-}" in
     build)      shift; cmd_build "$@" ;;
     approve)    shift; cmd_approve "$@" ;;
     resume)     shift; cmd_resume "$@" ;;
+    status)     cmd_status ;;
+    config)     shift; cmd_config "$@" ;;
     --help|-h)  show_help ;;
     --version)  echo "asimov ${ASIMOV_VERSION}" ;;
     "")         launch_ai ;;

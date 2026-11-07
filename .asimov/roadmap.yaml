@@ -2,16 +2,14 @@
 # See CHANGELOG.md for release history.
 
 current:
-  version: "3.1.0"
-  title: "status + config commands"
+  version: "3.2.0"
+  title: "next: decided by the first real builds"
   status: pending
   deliverables:
-    - "asimov status — show protocols, roadmap, pre-commit, AI CLI, config issues, and a build's phase and spend"
-    - "asimov config get|set — read/write global and project config without manual YAML"
-    - "Tests for both commands"
+    - "Collect what goes wrong in the first real build-mode runs and fix the top items"
 
 previous:
-  version: "3.0.0"
-  title: "build mode: from specs to finished repos"
+  version: "3.1.0"
+  title: "status + config commands"
 
 backlog: []
