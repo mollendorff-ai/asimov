@@ -6,15 +6,25 @@
 
 **Run AI coding CLIs in full-autonomy mode, and still get good code.**
 
-> **Read this first.** Asimov is a personal tool. It launches Claude Code,
-> Gemini CLI or Codex CLI with every approval prompt turned off, on purpose,
-> so the agent can write, run and commit code in the terminal with as little
-> human interaction as possible. Use it only in a sandbox (a VM, container or
-> throwaway machine) where an agent with unrestricted shell access cannot hurt
-> anything you care about. It is published because there is no reason not to,
-> not because it is looking for users. Built with heavy AI assistance.
+Two modes:
 
-Status: personal, works for its author, no stability promises.
+- `asimov` -- an interactive Claude Code, Gemini CLI or Codex CLI session
+  with no approval prompts, the protocols and your roadmap loaded.
+- `asimov build <specs>` -- unattended: from specs to planned, built and
+  tested local git repos, with one stop for you to approve the plan.
+
+> **Read this first.** Asimov is a personal tool. It runs AI agents with
+> every approval prompt turned off, on purpose, and build mode runs them
+> with nobody watching. Use it only in a sandbox (a VM, container or
+> throwaway machine) where an agent with unrestricted shell access cannot
+> hurt anything you care about. It is published because there is no reason
+> not to, not because it is looking for users. Built with heavy AI
+> assistance.
+
+Status: personal, no stability promises. Its author uses interactive mode
+in a sandbox. Build mode is new in v3.0.0: tested with mock agents and one
+small real build with Claude (3 milestones, 3 runs, $0.84); Gemini and
+Codex build runs are tested with mocks only.
 
 ## The idea
 
@@ -30,6 +40,8 @@ Autonomy without guardrails produces fast garbage. Asimov pairs the two:
 - **Quality gate** -- a pre-commit hook that blocks any commit that is not
   formatted, lint-clean and 100% covered. The agent cannot ship unchecked
   code; it has to fix it.
+- **Stop rules** -- in build mode, caps on runs, hours, spend and stalls,
+  so an unattended build always ends and says why.
 
 ## Install
 
@@ -56,17 +68,36 @@ different, Python-based `yq` that does not work; download mikefarah's from
 its [releases page](https://github.com/mikefarah/yq/releases). Asimov
 checks and tells you if the wrong one is installed.
 
+Build mode also needs `git`, plus [ref][ref] for PDF and URL specs and for
+link checks, and `pandoc` for `.docx` specs. `asimov status` shows what is
+installed and what is missing.
+
 ## Quick start
+
+Interactive, in an existing project:
 
 ```bash
 cd your-project
 asimov init        # scaffold .asimov/, install pre-commit hook
 asimov             # launch the AI with protocols + roadmap warmup
 asimov migrate     # bring an older .asimov/ up to date
+```
+
+Build mode, in an empty folder:
+
+```bash
+asimov config set build.sandbox true      # once, in the sandbox
+mkdir builds && cd builds
+asimov build ~/specs/todo-api.md          # read, plan, stop
+asimov approve --max-usd 20               # build, capped at $20
+```
+
+Anywhere:
+
+```bash
+asimov status      # tools, config, project and build in one view
 asimov update      # install the latest tagged release
-asimov build <spec>  # specs to finished repos, unattended
-asimov status      # check tools, config, project and build in one view
-asimov config set build.sandbox true   # change config without editing YAML
+asimov config get  # show the config; set and unset change it
 ```
 
 `asimov init` creates:
@@ -106,8 +137,12 @@ asimov build spec.md https://wiki.example.com/api-spec design.pdf
 # reads the specs, has the agent write a plan, then stops
 asimov approve --max-usd 20   # after reviewing .asimov-build/plan.yaml
 asimov resume                 # continue after any stop
-asimov build --yes spec.md    # no approval stop
+asimov build --yes --max-usd 20 spec.md   # no approval stop
 ```
+
+Always set `--max-usd` with Claude: a small spec cost $0.84 in testing,
+but a real project can cost far more. `asimov status` in the build folder
+shows the phase, the spend against the cap and the milestones released.
 
 1. **Read specs** -- `.md` and `.txt` as they are, `.pdf` and URLs through
    [ref][ref], `.docx` through pandoc, all saved as Markdown in
