@@ -4,31 +4,32 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/lctavares/c99beaff02a1895916d78b8d2a8ad79d/raw/tests.json)](https://github.com/mollendorff-ai/asimov/actions/workflows/ci.yml)
 
-**AI session orchestration for coding CLIs** — protocols,
-quality gates, and roadmap warmup.
+**Run AI coding CLIs in full-autonomy mode, and still get good code.**
 
-AI coding assistants (Claude Code, Gemini CLI, Codex CLI) launch
-with no memory of your project's conventions. Every session starts
-cold: the AI doesn't know your stack, your quality bar, or what
-sprint you're on.
+> **Read this first.** Asimov is a personal tool. It launches Claude Code,
+> Gemini CLI or Codex CLI with every approval prompt turned off, on purpose,
+> so the agent can write, run and commit code in the terminal with as little
+> human interaction as possible. Use it only in a sandbox (a VM, container or
+> throwaway machine) where an agent with unrestricted shell access cannot hurt
+> anything you care about. It is published because there is no reason not to,
+> not because it is looking for users. Built with heavy AI assistance.
 
-Asimov fixes that. It injects behavioral protocols into the system
-prompt and warms up each session with your roadmap -- so the AI
-starts aligned, not blank.
+Status: personal, works for its author, no stability promises.
 
-## What it does
+## The idea
 
-- **Protocols** -- JSON rules injected into the system prompt at
-  launch. They survive context compaction and steer behavior across
-  the entire session (freshness, sycophancy, coding standards,
-  autonomous sprints).
-- **Quality gate** -- a pre-commit hook that auto-detects your
-  language and enforces format + lint + 100% coverage at commit
-  time. Works for Rust, Python, Node, Go, and Flutter.
-- **Session warmup** -- reads your roadmap before the interactive
-  session so the AI knows what you're working on.
-- **Vendor-neutral** -- one config works with Claude Code, Gemini
-  CLI, and Codex CLI.
+Autonomy without guardrails produces fast garbage. Asimov pairs the two:
+
+- **Full autonomy** -- the agent runs with no permission prompts, at the
+  highest model and effort settings.
+- **Behavioral protocols** -- short JSON rules (honesty over comfort, coding
+  standards, autonomous sprint lifecycle, web fetching) given to the agent at
+  launch.
+- **Session warmup** -- the agent reads your roadmap before you type anything,
+  so it starts on the current sprint.
+- **Quality gate** -- a pre-commit hook that blocks any commit that is not
+  formatted, lint-clean and 100% covered. The agent cannot ship unchecked
+  code; it has to fix it.
 
 ## Install
 
@@ -37,7 +38,9 @@ ASIMOV=https://raw.githubusercontent.com
 curl -fsSL $ASIMOV/mollendorff-ai/asimov/main/install.sh | bash
 ```
 
-Or clone and install manually:
+The installer downloads the latest tagged release and checks every file
+against the release's `SHA256SUMS` before installing anything. Or from a
+clone:
 
 ```bash
 git clone https://github.com/mollendorff-ai/asimov.git
@@ -45,16 +48,22 @@ cd asimov
 make install
 ```
 
-Copies to `~/.local/bin/` and `~/.local/share/asimov/`.
-Requires `yq` and `jq` (`brew install yq jq`).
+Installs to `~/.local/bin/` and `~/.local/share/asimov/`.
+
+**Requires `jq` and mikefarah's `yq` v4** (the Go version):
+`brew install yq jq`. On Debian and Ubuntu, `apt install yq` gives a
+different, Python-based `yq` that does not work; download mikefarah's from
+its [releases page](https://github.com/mikefarah/yq/releases). Asimov
+checks and tells you if the wrong one is installed.
 
 ## Quick start
 
 ```bash
 cd your-project
 asimov init        # scaffold .asimov/, install pre-commit hook
-asimov             # launch AI with protocols + roadmap warmup
-asimov update      # update asimov to the latest release
+asimov             # launch the AI with protocols + roadmap warmup
+asimov migrate     # bring an older .asimov/ up to date
+asimov update      # install the latest tagged release
 ```
 
 `asimov init` creates:
@@ -62,18 +71,32 @@ asimov update      # update asimov to the latest release
 ```text
 .asimov/
 ├── project.yaml          # identity, description, stack, conventions
-├── roadmap.yaml          # milestones + sprint status
-├── freshness.json        # protocol: use ref fetch for web content
+├── roadmap.yaml          # current milestone + backlog
+├── freshness.json        # protocol: prefer ref fetch for web pages
 ├── sycophancy.json       # protocol: truth over comfort
-├── sprint.json           # protocol: autonomous mode triggers
+├── sprint.json           # protocol: autonomous mode lifecycle
 └── coding-standards.json # protocol: code quality principles
 .git/hooks/pre-commit     # quality gate (format + lint + coverage)
 ```
 
+## How each AI gets the protocols
+
+- **Claude Code** -- protocols via `--append-system-prompt` (system
+  prompt, outside the compacted transcript); roadmap warmup as a separate
+  `-p` turn, then `--continue`; autonomy via
+  `--dangerously-skip-permissions`.
+- **Gemini CLI** -- protocols and warmup in the first message via
+  `--prompt-interactive`; autonomy via `--approval-mode=yolo`.
+- **Codex CLI** -- protocols and warmup in the first message (initial
+  prompt); autonomy via `--full-auto`.
+
+Claude Code is the primary target. Gemini CLI and Codex CLI have no flag to
+append to the system prompt, so their protocols arrive as the first message
+and can be lost when a long session is compacted.
+
 ## Config
 
-Global defaults in `~/.asimov/config.yaml`
-(auto-created on first run):
+Global defaults in `~/.asimov/config.yaml` (created on first run):
 
 ```yaml
 launch:
@@ -90,78 +113,81 @@ launch:
 
   gemini:
     args:
-      - --yolo
+      - --approval-mode=yolo
 
   codex:
     args:
       - --full-auto
 ```
 
+Per-project overrides go in `.asimov/launch.yaml`, same format. For each
+setting (`model`, `args`, `env`), a project value replaces the global one
+entirely; lists and maps are not merged.
+
 ### Why these defaults
 
-**Claude Code** — max autonomy, max brainpower:
+Everything is set for maximum autonomy and maximum reasoning, because that
+is the point of the tool:
 
-- `--dangerously-skip-permissions` — zero tool-approval prompts ([docs][cc-perms])
-- `MAX_THINKING_TOKENS` — full extended thinking budget ([docs][cc-think])
-- `CLAUDE_CODE_EFFORT_LEVEL: max` — deepest exploration and reasoning ([docs][cc-settings])
-- `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 1` — multi-agent coordination ([docs][cc-teams])
+- `--dangerously-skip-permissions` -- no tool-approval prompts ([docs][cc-perms])
+- `MAX_THINKING_TOKENS` -- large extended-thinking budget ([docs][cc-think])
+- `CLAUDE_CODE_EFFORT_LEVEL: max` -- deepest reasoning ([docs][cc-settings])
+- `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 1` -- multi-agent coordination ([docs][cc-teams])
+- `--approval-mode=yolo` -- Gemini CLI auto-approves all actions ([docs][gem-cli])
+- `--full-auto` -- Codex CLI autonomous mode ([docs][codex-cli])
 
-**Gemini CLI** — autonomous mode:
-
-- `--yolo` — skip all confirmations ([docs][gem-cli])
-
-**Codex CLI** — autonomous mode:
-
-- `--full-auto` — no approval prompts ([docs][codex-cli])
-
-Asimov ships with everything cranked to 11. These are CLI tools
-for engineers who know what they're doing, not chatbots for
-casual users. Every setting removes friction or increases capability.
-
-Per-project overrides go in `.asimov/launch.yaml`
-(same format, project wins on conflicts).
+The cost is real: every Claude launch spends one extra warmup turn on the
+largest model at maximum effort. And again: an agent with these flags can
+run any command your user can. Sandbox only.
 
 ## Protocols
 
-Injected into the AI system prompt at launch. They persist
-through context compaction -- the AI never forgets them.
-
 | Protocol | Purpose |
 | -------- | ------- |
-| `freshness.json` | Use `ref fetch` for web content |
-| `sycophancy.json` | Prioritize accuracy over comfort |
-| `sprint.json` | Autonomous mode until deliverables done |
+| `freshness.json` | Prefer `ref fetch` for web pages when [ref][ref] is installed |
+| `sycophancy.json` | Accuracy over comfort |
+| `sprint.json` | Status `autonomous`: work until deliverables are done |
 | `coding-standards.json` | Readable code, tests as docs, zero warnings |
 
 ## Quality gate
 
-The pre-commit hook auto-detects your project language:
+The pre-commit hook detects the project language by marker file. For
+Node, coverage is only enforced if your test config sets a 100% threshold.
 
 | Language | Format | Lint | Coverage |
 | -------- | ------ | ---- | -------- |
-| Rust | `cargo fmt` | `clippy --pedantic` | `llvm-cov 100%` |
-| Python | `ruff fmt` | `ruff --select ALL` | `pytest-cov 100%` |
-| Node | `prettier` | `eslint --max-warn=0` | `npm test` |
-| Go | `gofumpt` | `golangci-lint` | `go-test-cov 100%` |
-| Flutter | `dart format` | `dart analyze` | `flutter test 100%` |
+| Rust | `cargo fmt` | `clippy --pedantic` | `llvm-cov` 100% |
+| Python | `ruff format` | project config, else `ALL` | `pytest-cov` 100% |
+| Node | `prettier` | `eslint --max-warnings=0` | `npm test` |
+| Go | `gofumpt` | `golangci-lint` | `go-test-coverage` 100% |
+| Flutter | `dart format` | `dart analyze` | `flutter test` 100% |
 
-The hook includes a warning to LLM agents: bypassing it is
-prohibited. If checks fail, the AI must fix the code.
+The hook carries a notice telling AI agents not to bypass it. If checks
+fail, the agent has to fix the code. The hook lives in `.git/hooks/`, so
+run `asimov init` or `asimov migrate` in each clone, and `asimov migrate`
+after `asimov update` to refresh it.
 
 ## Development
 
 ```bash
 make lint    # shellcheck on all shell scripts
-make test    # bats test suite (85 tests)
+make test    # bats test suite
 ```
+
+Releases are automatic: when `ASIMOV_VERSION` in `bin/asimov` changes on
+`main` and CI passes, CI tags `vX.Y.Z` and publishes a release with
+`SHA256SUMS` and the CHANGELOG notes.
+
+Not related to Reflection AI's Asimov or other projects with the same name.
 
 ## License
 
 [MIT](LICENSE)
 
+[ref]: https://github.com/mollendorff-ai/ref
 [cc-perms]: https://code.claude.com/docs/en/permissions
 [cc-think]: https://code.claude.com/docs/en/settings
 [cc-settings]: https://code.claude.com/docs/en/settings
 [cc-teams]: https://code.claude.com/docs/en/agent-teams
-[gem-cli]: https://google-gemini.github.io/gemini-cli/docs/get-started/configuration.html
+[gem-cli]: https://geminicli.com/docs/cli/cli-reference/
 [codex-cli]: https://developers.openai.com/codex/cli/reference/

@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.12.0
+
+- README reframed: personal tool for sandboxed full-autonomy use, with a
+  plain warning, status line, AI-assistance note and per-AI table
+- Gemini CLI and Codex CLI now get the protocols and roadmap warmup as the
+  first message (`--prompt-interactive` for Gemini, initial prompt for
+  Codex); previously only Claude got them
+- Gemini default flag `--yolo` (deprecated) replaced by
+  `--approval-mode=yolo`
+- `check_deps` detects the Python `yq` that `apt install yq` provides and
+  stops with instructions for mikefarah/yq instead of failing mid-launch
+- `migrate_global_config` writes only when a key is missing, so launching
+  no longer rewrites `~/.asimov/config.yaml` (or strips its comments)
+- `asimov migrate` no longer deletes `CLAUDE.md`, `GEMINI.md` or
+  `CODEX.md`; it keeps them and prints a note
+- `asimov update` and `install.sh` install the latest tagged release and
+  verify every file against the release's `SHA256SUMS`; nothing is changed
+  if a check fails
+- CI `release` job tags and publishes a release when `ASIMOV_VERSION`
+  changes on main; `install.sh` is now shellchecked
+- `freshness.json`: prefer `ref fetch` when `ref` is installed, instead of
+  forbidding the built-in web tools outright
+- Pre-commit hook: Python lint uses the project's ruff config when present
+  (`ruff.toml`, `.ruff.toml`, or `[tool.ruff]` in pyproject.toml) and falls
+  back to `--select ALL`; header no longer claims an organizational mandate
+- Protocol file list defined once (`ASIMOV_PROTOCOLS`)
+- Tests: 103 (new launch tests for all three AIs, yq flavour, ruff config,
+  checksum-verified update; tool-missing tests no longer depend on the host
+  PATH)
+
 ## 2.11.0
 
 - Add `asimov update`: fetch latest release from GitHub, replace binary

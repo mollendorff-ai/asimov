@@ -23,7 +23,7 @@ uninstall:
 	@echo "Uninstalled asimov"
 
 lint:
-	shellcheck bin/asimov hooks/pre-commit
+	shellcheck bin/asimov hooks/pre-commit install.sh
 
 test:
 	bats test/

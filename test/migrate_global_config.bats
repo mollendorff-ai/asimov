@@ -80,3 +80,13 @@ teardown() {
     run yq -r '.launch.claude.args[0]' "$ASIMOV_GLOBAL_CONFIG"
     [ "$output" = "--dangerously-skip-permissions" ]
 }
+
+# ─── Leaves a complete config alone ─────────────────────────────────────
+
+@test "migrate_global_config does not rewrite a config that has every key" {
+    ensure_global_config
+    local before; before="$(cat "$ASIMOV_GLOBAL_CONFIG")"
+    run migrate_global_config
+    [ "$status" -eq 0 ]
+    [ "$(cat "$ASIMOV_GLOBAL_CONFIG")" = "$before" ]
+}

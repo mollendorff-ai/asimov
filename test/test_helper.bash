@@ -95,3 +95,14 @@ unmock_command() {
     local cmd="$1"
     rm -f "${TEST_TMPDIR}/mocks/${cmd}"
 }
+
+# Print PATH with every directory that contains the given command removed
+path_without() {
+    local cmd="$1" dir out=""
+    local IFS=':'
+    for dir in $PATH; do
+        [ -x "${dir}/${cmd}" ] && continue
+        out="${out:+${out}:}${dir}"
+    done
+    printf '%s' "$out"
+}

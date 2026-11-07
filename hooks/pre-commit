@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # QUALITY GATE - Universal Auto-Detecting Pre-commit Hook
 # ═══════════════════════════════════════════════════════════════════════════════
-# Version: 2.0.0
+# Version: 2.1.0
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # ╔═══════════════════════════════════════════════════════════════════════════╗
@@ -18,7 +18,7 @@
 # ║                                                                           ║
 # ║  If checks fail, FIX THE CODE. No exceptions.                             ║
 # ║                                                                           ║
-# ║  This policy is mandated by organizational security requirements.         ║
+# ║  This is the repository owner's policy for this project.                  ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
 # QUALITY STANDARDS ENFORCED:
@@ -113,12 +113,19 @@ if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f requirements.txt ]; then
     fi
     echo "✓ Format OK"
 
-    # LINT CHECK (pedantic - ALL rules)
+    # LINT CHECK (project's ruff config if it has one, else ALL rules)
     echo ""
-    echo "[2/3] LINT: ruff check --select ALL ."
-    if ! ruff check --select ALL .; then
+    RUFF_ARGS=()
+    if [ -f ruff.toml ] || [ -f .ruff.toml ] || grep -q '^\[tool\.ruff' pyproject.toml 2>/dev/null; then
+        RUFF_DESC="project ruff config"
+    else
+        RUFF_ARGS=(--select ALL)
+        RUFF_DESC="ALL rules, no project ruff config found"
+    fi
+    echo "[2/3] LINT: ruff check ${RUFF_ARGS[*]:+${RUFF_ARGS[*]} }. (${RUFF_DESC})"
+    if ! ruff check "${RUFF_ARGS[@]}" .; then
         echo ""
-        echo "❌ LINT FAILED: Ruff found issues (ALL rules enabled)"
+        echo "❌ LINT FAILED: Ruff found issues (${RUFF_DESC})"
         echo "   Fix all issues before committing"
         exit 1
     fi

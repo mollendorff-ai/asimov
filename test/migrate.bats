@@ -48,16 +48,18 @@ teardown() {
     [ ! -d .asimov/protocols ]
 }
 
-@test "migrate removes old bootstrap files from project root" {
+@test "migrate keeps CLAUDE.md, GEMINI.md and CODEX.md and says so" {
     mkdir -p .asimov
     touch .asimov/project.yaml
-    touch CLAUDE.md GEMINI.md CODEX.md
+    echo "# my own instructions" > CLAUDE.md
+    touch GEMINI.md CODEX.md
 
     run "$ASIMOV_BIN" migrate
     [ "$status" -eq 0 ]
-    [ ! -f CLAUDE.md ]
-    [ ! -f GEMINI.md ]
-    [ ! -f CODEX.md ]
+    [ "$(cat CLAUDE.md)" = "# my own instructions" ]
+    [ -f GEMINI.md ]
+    [ -f CODEX.md ]
+    [[ "$output" == *"CLAUDE.md kept"* ]]
 }
 
 # ─── Slim project.yaml ──────────────────────────────────────────────────

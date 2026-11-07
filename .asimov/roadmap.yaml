@@ -2,7 +2,7 @@
 # See CHANGELOG.md for release history.
 
 current:
-  version: "2.12.0"
+  version: "2.13.0"
   title: "status + config commands"
   status: pending
   deliverables:
@@ -11,7 +11,7 @@ current:
     - "Tests for both commands"
 
 previous:
-  version: "2.11.0"
-  title: "self-update command"
+  version: "2.12.0"
+  title: "evaluation fixes: per-AI protocols, safe migrate, verified updates"
 
 backlog: []
