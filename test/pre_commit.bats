@@ -109,9 +109,9 @@ teardown() {
 
 @test "pre-commit fails when ruff not installed for python" {
     touch pyproject.toml
-    # No ruff mock — unmock to ensure it's not found
+    # Hide any ruff installed on the host so the test does not depend on it
     unmock_command "ruff" 2>/dev/null || true
-    run "$HOOK"
+    PATH="$(path_without ruff)" run "$HOOK"
     [ "$status" -eq 1 ]
     [[ "$output" == *"ruff is not installed"* ]]
 }
@@ -119,7 +119,7 @@ teardown() {
 @test "pre-commit fails when gofumpt not installed for go" {
     touch go.mod
     unmock_command "gofumpt" 2>/dev/null || true
-    run "$HOOK"
+    PATH="$(path_without gofumpt)" run "$HOOK"
     [ "$status" -eq 1 ]
     [[ "$output" == *"gofumpt is not installed"* ]]
 }
@@ -146,4 +146,39 @@ teardown() {
 @test "pre-commit has set -e" {
     run grep -c "^set -e" "$HOOK"
     [ "$output" -ge 1 ]
+}
+
+# ─── Python lint config ─────────────────────────────────────────────────
+
+_mock_python_tools() {
+    mock_command "ruff" 0
+    mock_command "pytest" 0
+    mock_command "python" 0
+}
+
+@test "pre-commit uses --select ALL when project has no ruff config" {
+    printf '[project]\nname = "x"\n' > pyproject.toml
+    _mock_python_tools
+    run "$HOOK"
+    [[ "$output" == *"ruff check --select ALL ."* ]]
+}
+
+@test "pre-commit respects [tool.ruff] in pyproject.toml" {
+    printf '[project]\nname = "x"\n\n[tool.ruff.lint]\nselect = ["E"]\n' > pyproject.toml
+    _mock_python_tools
+    run "$HOOK"
+    [[ "$output" == *"project ruff config"* ]]
+    [[ "$output" != *"--select ALL"* ]]
+}
+
+@test "pre-commit respects ruff.toml" {
+    touch pyproject.toml
+    echo 'line-length = 100' > ruff.toml
+    _mock_python_tools
+    run "$HOOK"
+    [[ "$output" == *"project ruff config"* ]]
+}
+
+@test "pre-commit header does not claim an organizational mandate" {
+    ! grep -q "organizational security requirements" "$HOOK"
 }
