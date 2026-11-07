@@ -1,6 +1,6 @@
 # Build Mode Design
 
-Status: v3.0.0-alpha.1 implements phases 1 to 5 · 2026-11-07
+Status: implemented in v3.0.0 · 2026-11-07
 
 ## Summary
 
@@ -234,14 +234,20 @@ record arguments and write scripted outputs.
 
 - Headless commands: `claude -p`, `gemini -p`, and
   `codex exec --skip-git-repo-check` (the plan runs outside a git repo).
-- Build mode stays in `bin/asimov` for the alpha (about 1,100 lines), so
-  install and update keep shipping one script. Revisit when the execute
-  loop lands.
+- Build mode stays in `bin/asimov` (about 1,350 lines), so install and
+  update keep shipping one script.
+- The next milestone always comes from `plan.yaml`, not from the agent's
+  edits to the roadmap; an agent that moves the milestone itself is
+  treated as having released it.
+- The time cap counts per build session, so `resume` gets a fresh window.
+- `resume` after a stop resets the stall counters; loop counts and spend
+  carry over.
+- Repos get a local commit identity (`Asimov Build`) when git has none.
 - The plan run gets no protocols; its prompt carries the full instructions.
 - The scaffold makes no commit; the agent's first commit goes through the
   pre-commit gate like every other.
 
 ## Delivery
 
-- v3.0.0-alpha: ingest, preflight, plan, approval, scaffold.
+- v3.0.0-alpha.1: ingest, preflight, plan, approval, scaffold.
 - v3.0.0: execute loop, stop rules, resume, release check, README.

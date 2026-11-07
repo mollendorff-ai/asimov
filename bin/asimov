@@ -3,7 +3,7 @@
 # Personal tool, built for sandboxed environments. Claude Code, Gemini CLI, Codex CLI.
 set -euo pipefail
 
-ASIMOV_VERSION="3.0.0-alpha.1"
+ASIMOV_VERSION="3.0.0"
 ASIMOV_REPO="mollendorff-ai/asimov"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
@@ -913,14 +913,240 @@ build_scaffold() {
         echo "  ${name}/  git repo, .asimov/, docs/specs/"
     done
     state_set phase "scaffolded"
-    cat << EOF
+    echo "Scaffolded in ${BUILD_DIR}."
+}
 
-Scaffolded in ${BUILD_DIR}. Each roadmap's first milestone is set to
-autonomous. The unattended build loop arrives in v3.0.0; until then, start
-a project with:
+# ─── Build: execute loop ─────────────────────────────────────────────────
 
-  cd ${BUILD_DIR}/$(yq -r '.projects[0].name' "$plan") && asimov
-EOF
+BUILD_DEFAULT_MAX_LOOPS=40
+BUILD_DEFAULT_MAX_HOURS=8
+BUILD_DEFAULT_STALL=3
+
+# Cap options shared by build, approve and resume. Sets CAP_* globals and
+# REST (remaining arguments). Unknown options fail.
+parse_cap_options() {
+    CAP_LOOPS="" CAP_HOURS="" CAP_USD="" CAP_STALL="" REST=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --max-loops) CAP_LOOPS="${2:?--max-loops needs a number}"; shift 2 ;;
+            --max-hours) CAP_HOURS="${2:?--max-hours needs a number}"; shift 2 ;;
+            --max-usd)   CAP_USD="${2:?--max-usd needs an amount}"; shift 2 ;;
+            --stall)     CAP_STALL="${2:?--stall needs a number}"; shift 2 ;;
+            *)           REST+=("$1"); shift ;;
+        esac
+    done
+    local v
+    for v in "$CAP_LOOPS" "$CAP_HOURS" "$CAP_STALL"; do
+        [ -z "$v" ] || [[ "$v" =~ ^[0-9]+$ ]] || build_fail "caps must be whole numbers (got '${v}')"
+    done
+    [ -z "$CAP_USD" ] || [[ "$CAP_USD" =~ ^[0-9]+(\.[0-9]+)?$ ]] || build_fail "--max-usd must be an amount (got '${CAP_USD}')"
+    return 0
+}
+
+# Store caps given on the command line; keep earlier ones otherwise
+save_caps() {
+    [ -n "$CAP_LOOPS" ] && state_set caps.max_loops "$CAP_LOOPS"
+    [ -n "$CAP_HOURS" ] && state_set caps.max_hours "$CAP_HOURS"
+    [ -n "$CAP_USD" ] && state_set caps.max_usd "$CAP_USD"
+    [ -n "$CAP_STALL" ] && state_set caps.stall "$CAP_STALL"
+    return 0
+}
+
+cap() {
+    local v
+    v="$(state_get "caps.$1")"
+    [ -n "$v" ] && echo "$v" || echo "$2"
+}
+
+pstate_get() { state_get "projects[\"$1\"].$2"; }
+pstate_set() { state_set "projects[\"$1\"].$2" "$3"; }
+
+commit_count() {
+    git -C "$1" rev-list --count HEAD 2>/dev/null || echo 0
+}
+
+# Give a repo a commit identity when the sandbox has none, so agents can commit
+ensure_git_identity() {
+    git -C "$1" config user.email &>/dev/null && return 0
+    git -C "$1" config user.name "Asimov Build"
+    git -C "$1" config user.email "asimov-build@localhost"
+}
+
+# Write roadmap.yaml for milestone index i of project p from the plan
+write_roadmap() {
+    local p="$1" i="$2" dir="$3" plan="${BUILD_STATE}/plan.yaml"
+    if [ "$i" -eq 0 ]; then
+        yq -P ".projects[$p] | {\"current\": (.milestones[0] + {\"status\": \"autonomous\"}), \"backlog\": .milestones[1:]}" \
+            "$plan" > "${dir}/.asimov/roadmap.yaml"
+    else
+        yq -P ".projects[$p] | {\"current\": (.milestones[$i] + {\"status\": \"autonomous\"}),
+            \"previous\": {\"version\": .milestones[$((i - 1))].version, \"title\": .milestones[$((i - 1))].title},
+            \"backlog\": .milestones[$((i + 1)):]}" "$plan" > "${dir}/.asimov/roadmap.yaml"
+    fi
+}
+
+BUILD_LOOP_PROMPT='You are building this project unattended. Nobody will answer questions. Work on the current milestone in .asimov/roadmap.yaml. The specifications are in docs/specs/ and the planning assumptions in docs/ASSUMPTIONS.md.
+
+1. Write tests from the milestone acceptance criteria first.
+2. Implement until every test passes.
+3. Commit in small steps. Every commit goes through the pre-commit quality gate (format, lint, 100% coverage). If it fails, fix the code. Never bypass it.
+4. When every deliverable exists and every acceptance criterion has a passing test: set current.status to released in .asimov/roadmap.yaml, add the milestone to CHANGELOG.md, and commit. Do not edit any other part of roadmap.yaml; Asimov moves to the next milestone.
+5. If you cannot continue (a credential you do not have, a contradiction in the specs, a tool you cannot install), write BLOCKED.md in the project root saying exactly what is needed, and stop.
+6. Record every new decision in docs/ASSUMPTIONS.md instead of asking.'
+
+# One agent run in a project; prints the run cost in USD (0 if unknown)
+build_agent_turn() {
+    local ai="$1" dir="$2" prompt="$3" log="$4" budget="$5" sp first
+    sp="$(cd "$dir" && build_system_prompt)"
+    mkdir -p "$(dirname "$log")"
+    (
+        cd "$dir"
+        case "$ai" in
+            claude)
+                local extra=(--output-format json)
+                [ -n "$sp" ] && extra+=(--append-system-prompt "$sp")
+                [ -n "$budget" ] && extra+=(--max-budget-usd "$budget")
+                claude "${AGENT_ARGS[@]}" "${extra[@]}" -p "$prompt" ;;
+            gemini|codex)
+                first=""
+                [ -n "$sp" ] && first="Follow these project rules for the whole session (JSON): ${sp}
+
+"
+                if [ "$ai" = "gemini" ]; then
+                    gemini "${AGENT_ARGS[@]}" -p "${first}${prompt}"
+                else
+                    codex exec "${AGENT_ARGS[@]}" "${first}${prompt}"
+                fi ;;
+        esac
+    ) > "$log" 2>&1 || true
+    if [ "$ai" = "claude" ]; then
+        jq -r 'select(type == "object") | .total_cost_usd // 0' "$log" 2>/dev/null | tail -1 | grep . || echo 0
+    else
+        echo 0
+    fi
+}
+
+# Links in README and docs must work before a milestone counts as released.
+# Returns 0 when fine (or ref is missing), 1 with the report in $2.
+build_link_check() {
+    local dir="$1" report="$2" files=() f
+    command -v ref &>/dev/null || return 0
+    [ -f "${dir}/README.md" ] && files+=("${dir}/README.md")
+    for f in "${dir}"/docs/*.md; do
+        [ -f "$f" ] && files+=("$f")
+    done
+    [ ${#files[@]} -gt 0 ] || return 0
+    local ok=0
+    : > "$report"
+    for f in "${files[@]}"; do
+        ref check-links "$f" >> "$report" 2>/dev/null || ok=1
+    done
+    return "$ok"
+}
+
+build_stop() {
+    state_set phase "stopped"
+    state_set stop_reason "$1"
+    echo ""
+    echo "Build stopped: $1"
+    echo "Fix the cause, then: asimov resume ${BUILD_DIR}  (caps can be raised with the same options)"
+    exit 2
+}
+
+build_execute() {
+    local plan="${BUILD_STATE}/plan.yaml" ai count p name dir
+    ai="$(state_get ai)"
+    count="$(yq '.projects | length' "$plan")"
+    local max_loops max_hours max_usd stall_cap deadline
+    max_loops="$(cap max_loops "$BUILD_DEFAULT_MAX_LOOPS")"
+    max_hours="$(cap max_hours "$BUILD_DEFAULT_MAX_HOURS")"
+    max_usd="$(cap max_usd "")"
+    stall_cap="$(cap stall "$BUILD_DEFAULT_STALL")"
+    deadline=$(( $(date +%s) + max_hours * 3600 ))
+    state_set phase "executing"
+    load_build_agent "$ai"
+
+    for ((p = 0; p < count; p++)); do
+        name="$(yq -r ".projects[$p].name" "$plan")"
+        dir="${BUILD_DIR}/${name}"
+        [ "$(pstate_get "$name" finished)" = "true" ] && continue
+        ensure_git_identity "$dir"
+        local idx milestones loops stall
+        idx="$(pstate_get "$name" milestone)"; idx="${idx:-0}"
+        milestones="$(yq ".projects[$p].milestones | length" "$plan")"
+        echo ""
+        echo "Building ${name} (milestone $((idx + 1)) of ${milestones})..."
+
+        while true; do
+            [ -f "${dir}/BLOCKED.md" ] && build_stop "${name}: the agent is blocked, see ${dir}/BLOCKED.md (delete it once solved)"
+            loops="$(pstate_get "$name" loops)"; loops="${loops:-0}"
+            stall="$(pstate_get "$name" stall)"; stall="${stall:-0}"
+            [ "$loops" -ge "$max_loops" ] && build_stop "${name}: reached ${max_loops} agent runs (--max-loops)"
+            [ "$stall" -ge "$stall_cap" ] && build_stop "${name}: ${stall} runs in a row without a new commit (--stall)"
+            [ "$(date +%s)" -ge "$deadline" ] && build_stop "reached ${max_hours} hours (--max-hours)"
+            local spent budget=""
+            spent="$(state_get spent_usd)"; spent="${spent:-0}"
+            if [ -n "$max_usd" ]; then
+                budget="$(awk -v m="$max_usd" -v s="$spent" 'BEGIN { r = m - s; printf "%.2f", (r > 0 ? r : 0) }')"
+                awk -v b="$budget" 'BEGIN { exit !(b <= 0) }' && build_stop "spent \$${spent} of \$${max_usd} (--max-usd)"
+            fi
+
+            local version before after cost prompt="$BUILD_LOOP_PROMPT" report
+            version="$(yq -r '.current.version' "${dir}/.asimov/roadmap.yaml")"
+            report="${BUILD_STATE}/logs/links-${name}.json"
+            if [ "$(pstate_get "$name" links_failed)" = "true" ]; then
+                prompt="${prompt}
+
+The milestone was marked released, but these links in README.md or docs/ are broken. Fix them, then mark it released again:
+$(head -c 4000 "$report")"
+            fi
+            before="$(commit_count "$dir")"
+            loops=$((loops + 1))
+            echo "  run ${loops}: ${name} ${version}"
+            cost="$(build_agent_turn "$ai" "$dir" "$prompt" \
+                "${BUILD_STATE}/logs/${name}-run-$(printf '%03d' "$loops").log" "$budget")"
+            after="$(commit_count "$dir")"
+            pstate_set "$name" loops "$loops"
+            state_set spent_usd "$(awk -v s="$spent" -v c="$cost" 'BEGIN { printf "%.4f", s + c }')"
+            if [ "$after" -gt "$before" ]; then
+                pstate_set "$name" stall 0
+            else
+                pstate_set "$name" stall $((stall + 1))
+            fi
+
+            # Released? (status set, or the agent moved it to previous itself)
+            local status prev
+            status="$(yq -r '.current.status // ""' "${dir}/.asimov/roadmap.yaml" 2>/dev/null)"
+            prev="$(yq -r '.previous.version // ""' "${dir}/.asimov/roadmap.yaml" 2>/dev/null)"
+            if [ "$status" != "released" ] && ! { [ "$prev" = "$version" ] && [ "$(yq -r '.current.version // ""' "${dir}/.asimov/roadmap.yaml")" != "$version" ]; }; then
+                continue
+            fi
+            if ! build_link_check "$dir" "$report"; then
+                echo "  ${name} ${version}: broken links, sending back"
+                pstate_set "$name" links_failed true
+                yq -i '.current.status = "autonomous"' "${dir}/.asimov/roadmap.yaml"
+                continue
+            fi
+            pstate_set "$name" links_failed false
+            echo "  ${name} ${version}: released"
+            idx=$((idx + 1))
+            pstate_set "$name" milestone "$idx"
+            if [ "$idx" -ge "$milestones" ]; then
+                pstate_set "$name" finished true
+                break
+            fi
+            write_roadmap "$p" "$idx" "$dir"
+        done
+    done
+
+    state_set phase "done"
+    echo ""
+    echo "Build done: every milestone of every project is released."
+    yq -r '.projects | to_entries[] | "  " + .key + ": " + (.value.loops | tostring) + " runs"' "$(state_file)"
+    local spent
+    spent="$(state_get spent_usd)"
+    [ -n "$spent" ] && [ "$ai" = "claude" ] && echo "  Spend: \$${spent}"
+    return 0
 }
 
 # Run the build from whatever phase state.yaml records
@@ -934,6 +1160,7 @@ build_continue() {
         planned)
             if [ "$(state_get approved)" = "true" ]; then
                 build_scaffold
+                build_continue
             else
                 build_stop_for_approval
             fi ;;
@@ -943,9 +1170,12 @@ build_continue() {
         awaiting_approval)
             build_stop_for_approval ;;
         approved)
-            build_scaffold ;;
-        scaffolded)
-            echo "Already scaffolded. The unattended build loop arrives in v3.0.0." ;;
+            build_scaffold
+            build_continue ;;
+        scaffolded|executing|stopped)
+            build_execute ;;
+        done)
+            echo "Build already done: every milestone of every project is released." ;;
         *)
             build_fail "unknown build phase '${phase}' in $(state_file)" ;;
     esac
@@ -954,6 +1184,8 @@ build_continue() {
 cmd_build() {
     check_deps
     ensure_global_config
+    parse_cap_options "$@"
+    set -- ${REST[@]+"${REST[@]}"}
     local dir="." ai="" yes=0 specs=()
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -983,6 +1215,7 @@ cmd_build() {
     state_set ai "$ai"
     state_set approved "$([ "$yes" -eq 1 ] && echo true || echo false)"
     state_set started "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    save_caps
 
     echo "Reading specs..."
     build_ingest "${specs[@]}"
@@ -993,7 +1226,8 @@ cmd_build() {
 
 cmd_approve() {
     check_deps
-    build_init_paths "${1:-.}"
+    parse_cap_options "$@"
+    build_init_paths "${REST[0]:-.}"
     [ -f "$(state_file)" ] || build_fail "no build in ${BUILD_DIR} (no .asimov-build/state.yaml)"
     local phase problems
     phase="$(state_get phase)"
@@ -1008,14 +1242,24 @@ cmd_approve() {
     fi
     state_set approved "true"
     state_set phase "approved"
+    save_caps
     echo "Plan approved."
     build_continue
 }
 
 cmd_resume() {
     check_deps
-    build_init_paths "${1:-.}"
+    parse_cap_options "$@"
+    build_init_paths "${REST[0]:-.}"
     [ -f "$(state_file)" ] || build_fail "no build in ${BUILD_DIR} (no .asimov-build/state.yaml)"
+    save_caps
+    # A stall or block was the reason to stop: start counting afresh
+    if [ "$(state_get phase)" = "stopped" ]; then
+        local n
+        while IFS= read -r n; do
+            [ -n "$n" ] && pstate_set "$n" stall 0
+        done < <(yq -r '.projects // {} | keys | .[]' "$(state_file)")
+    fi
     local ai
     ai="$(state_get ai)"
     build_check_sandbox
@@ -1037,8 +1281,8 @@ cmd_resume() {
 show_build_help() {
     cat << 'EOF'
 asimov build [options] <spec>...   read specs, plan, stop for approval
-asimov approve [dir]               approve the plan and scaffold the projects
-asimov resume [dir]                continue after a stop or a crash
+asimov approve [dir] [caps]        approve the plan, scaffold, build
+asimov resume [dir] [caps]         continue after a stop or a crash
 
 Specs: .md, .txt, .pdf (needs ref), .docx (needs pandoc), or a URL (needs ref).
 
@@ -1047,6 +1291,12 @@ Options:
     --ai <name>     claude, gemini or codex (default: build.default_ai,
                     then launch.default_ai)
     --yes           skip the approval stop
+
+Caps (build, approve and resume; a build never runs open-ended):
+    --max-loops <n> agent runs per project (default 40)
+    --max-hours <h> hours per build session (default 8)
+    --max-usd <x>   total spend, Claude only (default: none)
+    --stall <n>     stop after n runs with no new commit (default 3)
 
 Needs build.sandbox: true in ~/.asimov/config.yaml (sandbox only).
 Design: docs/design/build-mode.md
@@ -1065,7 +1315,7 @@ USAGE:
     asimov migrate      Update .asimov/ to latest format
     asimov update       Install the latest tagged release (checksum-verified)
     asimov build <spec>...  Plan projects from specs, stop for approval, scaffold
-    asimov approve [dir]    Approve a build plan and scaffold its projects
+    asimov approve [dir]    Approve a build plan, scaffold and build
     asimov resume [dir]     Continue a stopped build (asimov build --help)
     asimov --help       Show this help
     asimov --version    Show version

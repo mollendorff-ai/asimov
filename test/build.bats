@@ -65,8 +65,19 @@ _mock_agent() {
 if [ "$(basename "$PWD")" = ".asimov-build" ]; then
     [ -f "$MOCK_PLAN" ] && cp "$MOCK_PLAN" plan.yaml
     [ -z "${MOCK_NO_ASSUMPTIONS:-}" ] && printf '# Assumptions\n\n- Storage: SQLite, simplest.\n- Auth: none in v0.1.\n' > ASSUMPTIONS.md
+    exit "${MOCK_EXIT:-0}"
 fi
-exit "${MOCK_EXIT:-0}"
+# In a project: act like an agent working on the current milestone
+_commit() { echo "$RANDOM" >> work.txt; git add -A >/dev/null; git commit -q --no-verify -m "work" >/dev/null; }
+case "${MOCK_LOOP:-release}" in
+    release) _commit; yq -i '.current.status = "released"' .asimov/roadmap.yaml ;;
+    move)    _commit; yq -i '.previous = {"version": .current.version, "title": .current.title} | .current = .backlog[0] | .backlog = .backlog[1:]' .asimov/roadmap.yaml ;;
+    commit)  _commit ;;
+    block)   echo "Need an API key for the payments sandbox." > BLOCKED.md ;;
+    idle)    ;;
+esac
+echo '{"type":"result","total_cost_usd":0.25,"is_error":false}'
+exit 0
 EOF
     chmod +x "${MOCK_DIR}/$1"
 }
@@ -77,6 +88,8 @@ _mock_ref() {
 case "$1" in
     fetch) url="${!#}"
            printf '{"url":"%s","status":"%s","title":"Remote spec","sections":[{"level":1,"heading":"Overview","content":"Fetched body."}],"code":[{"lang":"sh","source":"make run"}]}\n' "$url" "$MOCK_REF_STATUS" ;;
+    check-links) [ -n "${MOCK_LINKS_FAIL:-}" ] && [ ! -f "${MOCK_LINKS_FIXED:-/nonexistent}" ] && { echo '{"broken":["https://dead.example"]}'; exit 1; }
+           echo '{"broken":[]}' ;;
     pdf)   printf '{"url":"%s","status":"ok","title":"PDF spec","sections":[{"level":2,"heading":"Tables","content":"| a | b |\\n| - | - |\\n| 1 | 2 |"}]}\n' "$2" ;;
     *)     exit 0 ;;
 esac
@@ -292,8 +305,8 @@ EOF
 
 @test "approve scaffolds a git repo with .asimov/ from the plan" {
     run "$ASIMOV_BIN" build spec.md
-    run "$ASIMOV_BIN" approve
-    [ "$status" -eq 0 ]
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$status" -eq 2 ]
     [ -d todo-api/.git ]
     [ -x todo-api/.git/hooks/pre-commit ]
     [ "$(yq -r .identity.name todo-api/.asimov/project.yaml)" = "todo-api" ]
@@ -306,20 +319,19 @@ EOF
     [ -f todo-api/docs/specs/01-spec.md ]
     [ -f todo-api/docs/ASSUMPTIONS.md ]
     [ "$(jq -r '.mcpServers.ref.args[0]' todo-api/.mcp.json)" = "mcp" ]
-    [ "$(yq -r .phase .asimov-build/state.yaml)" = "scaffolded" ]
+    [ "$(yq -r .phase .asimov-build/state.yaml)" = "stopped" ]
 }
 
 @test "build --yes scaffolds without stopping" {
-    run "$ASIMOV_BIN" build --yes spec.md
-    [ "$status" -eq 0 ]
+    run "$ASIMOV_BIN" build --yes --max-loops 0 spec.md
+    [ "$status" -eq 2 ]
     [[ "$output" != *"asimov approve"* ]]
     [ -d todo-api/.asimov ]
 }
 
 @test "a two-project plan scaffolds two repos" {
     _plan_two_projects
-    run "$ASIMOV_BIN" build --yes spec.md
-    [ "$status" -eq 0 ]
+    run "$ASIMOV_BIN" build --yes --max-loops 0 spec.md
     [ -d todo-api/.git ]
     [ -d todo-cli/.git ]
     [ "$(yq -r '.stack[0]' todo-cli/.asimov/project.yaml)" = "go" ]
@@ -336,14 +348,13 @@ EOF
 
 @test "no .mcp.json when ref is not installed" {
     rm "${MOCK_DIR}/ref"
-    run "$ASIMOV_BIN" build --yes spec.md
-    [ "$status" -eq 0 ]
+    run "$ASIMOV_BIN" build --yes --max-loops 0 spec.md
+    [ -d todo-api/.asimov ]
     [ ! -f todo-api/.mcp.json ]
 }
 
 @test "build --dir puts the build in another folder" {
-    run "$ASIMOV_BIN" build --yes --dir out spec.md
-    [ "$status" -eq 0 ]
+    run "$ASIMOV_BIN" build --yes --max-loops 0 --dir out spec.md
     [ -d out/.asimov-build ]
     [ -d out/todo-api/.git ]
 }
@@ -352,4 +363,146 @@ EOF
     run "$ASIMOV_BIN" build --help
     [ "$status" -eq 0 ]
     [[ "$output" == *"asimov approve"* ]]
+}
+
+# ─── Execute loop ───────────────────────────────────────────────────────
+
+@test "execute builds every milestone and finishes" {
+    run "$ASIMOV_BIN" build --yes spec.md
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"todo-api 0.1.0: released"* ]]
+    [[ "$output" == *"todo-api 0.2.0: released"* ]]
+    [[ "$output" == *"Build done"* ]]
+    [ "$(yq -r .phase .asimov-build/state.yaml)" = "done" ]
+    [ "$(yq -r '.projects["todo-api"].loops' .asimov-build/state.yaml)" = "2" ]
+    [ "$(yq -r .previous.version todo-api/.asimov/roadmap.yaml)" = "0.1.0" ]
+    [ "$(git -C todo-api rev-list --count HEAD)" -eq 2 ]
+}
+
+@test "execute promotes the next milestone from the plan" {
+    run "$ASIMOV_BIN" build --yes --max-loops 1 spec.md
+    [ "$status" -eq 2 ]
+    [ "$(yq -r .current.version todo-api/.asimov/roadmap.yaml)" = "0.2.0" ]
+    [ "$(yq -r .current.status todo-api/.asimov/roadmap.yaml)" = "autonomous" ]
+    [ "$(yq -r .previous.title todo-api/.asimov/roadmap.yaml)" = "CRUD endpoints" ]
+    [ "$(yq '.backlog | length' todo-api/.asimov/roadmap.yaml)" -eq 0 ]
+}
+
+@test "execute accepts an agent that moved the milestone itself" {
+    export MOCK_LOOP=move
+    run "$ASIMOV_BIN" build --yes spec.md
+    [ "$status" -eq 0 ]
+    [ "$(yq -r .phase .asimov-build/state.yaml)" = "done" ]
+}
+
+@test "execute runs the agent with the loop prompt and protocols" {
+    run "$ASIMOV_BIN" build --yes spec.md
+    grep -q -- '---call claude in todo-api' "$ARGS_LOG"
+    grep -qx -- '--output-format' "$ARGS_LOG"
+    grep -qx -- '--append-system-prompt' "$ARGS_LOG"
+    grep -q 'You are building this project unattended' "$ARGS_LOG"
+}
+
+@test "builds two projects one after the other" {
+    _plan_two_projects
+    run "$ASIMOV_BIN" build --yes spec.md
+    [ "$status" -eq 0 ]
+    local api cli
+    api="$(grep -n -- '---call claude in todo-api' "$ARGS_LOG" | tail -1 | cut -d: -f1)"
+    cli="$(grep -n -- '---call claude in todo-cli' "$ARGS_LOG" | head -1 | cut -d: -f1)"
+    [ "$api" -lt "$cli" ]
+}
+
+@test "stop rule: stall after runs with no new commit" {
+    export MOCK_LOOP=idle
+    run "$ASIMOV_BIN" build --yes --stall 2 spec.md
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"2 runs in a row without a new commit"* ]]
+    [ "$(yq -r .phase .asimov-build/state.yaml)" = "stopped" ]
+    [ "$(grep -c -- '---call claude in todo-api' "$ARGS_LOG")" -eq 2 ]
+}
+
+@test "stop rule: loop cap" {
+    export MOCK_LOOP=commit
+    run "$ASIMOV_BIN" build --yes --max-loops 3 spec.md
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"reached 3 agent runs"* ]]
+}
+
+@test "stop rule: BLOCKED.md stops the build and names the file" {
+    export MOCK_LOOP=block
+    run "$ASIMOV_BIN" build --yes spec.md
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"blocked"* ]]
+    [[ "$output" == *"BLOCKED.md"* ]]
+}
+
+@test "stop rule: spend cap stops once the cost is reached" {
+    export MOCK_LOOP=commit
+    run "$ASIMOV_BIN" build --yes --max-usd 0.5 spec.md
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"of \$0.5 (--max-usd)"* ]]
+    [ "$(grep -c -- '---call claude in todo-api' "$ARGS_LOG")" -eq 2 ]
+    grep -qx -- '--max-budget-usd' "$ARGS_LOG"
+}
+
+@test "stop rule: time cap" {
+    run "$ASIMOV_BIN" build --yes --max-hours 0 spec.md
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"reached 0 hours"* ]]
+}
+
+@test "resume continues after a stall and finishes" {
+    export MOCK_LOOP=idle
+    run "$ASIMOV_BIN" build --yes --stall 1 spec.md
+    [ "$status" -eq 2 ]
+    export MOCK_LOOP=release
+    run "$ASIMOV_BIN" resume
+    [ "$status" -eq 0 ]
+    [ "$(yq -r .phase .asimov-build/state.yaml)" = "done" ]
+}
+
+@test "resume after BLOCKED.md is removed continues" {
+    export MOCK_LOOP=block
+    run "$ASIMOV_BIN" build --yes spec.md
+    rm todo-api/BLOCKED.md
+    export MOCK_LOOP=release
+    run "$ASIMOV_BIN" resume
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Build done"* ]]
+}
+
+@test "resume can raise a cap" {
+    export MOCK_LOOP=release
+    run "$ASIMOV_BIN" build --yes --max-loops 1 spec.md
+    [ "$status" -eq 2 ]
+    run "$ASIMOV_BIN" resume --max-loops 5
+    [ "$status" -eq 0 ]
+    [ "$(yq -r .caps.max_loops .asimov-build/state.yaml)" = "5" ]
+}
+
+@test "broken links send a released milestone back to the agent" {
+    export MOCK_LINKS_FAIL=1
+    export MOCK_LINKS_FIXED="${TEST_TMPDIR}/links-fixed"
+    run "$ASIMOV_BIN" build --yes --max-loops 1 spec.md
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"broken links, sending back"* ]]
+    [ "$(yq -r .current.version todo-api/.asimov/roadmap.yaml)" = "0.1.0" ]
+    [ "$(yq -r .current.status todo-api/.asimov/roadmap.yaml)" = "autonomous" ]
+    touch "$MOCK_LINKS_FIXED"
+    run "$ASIMOV_BIN" resume --max-loops 10
+    [ "$status" -eq 0 ]
+    grep -q 'these links in README.md or docs/ are broken' "$ARGS_LOG"
+}
+
+@test "scaffold gives repos a commit identity when git has none" {
+    run "$ASIMOV_BIN" build --yes spec.md
+    [ "$status" -eq 0 ]
+    git -C todo-api config user.email
+}
+
+@test "caps must be numbers" {
+    run "$ASIMOV_BIN" build --max-loops ten spec.md
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"whole numbers"* ]]
 }
