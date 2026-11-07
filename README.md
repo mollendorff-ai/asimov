@@ -64,6 +64,7 @@ asimov init        # scaffold .asimov/, install pre-commit hook
 asimov             # launch the AI with protocols + roadmap warmup
 asimov migrate     # bring an older .asimov/ up to date
 asimov update      # install the latest tagged release
+asimov build <spec>  # plan and scaffold projects from specs (alpha)
 ```
 
 `asimov init` creates:
@@ -93,6 +94,42 @@ asimov update      # install the latest tagged release
 Claude Code is the primary target. Gemini CLI and Codex CLI have no flag to
 append to the system prompt, so their protocols arrive as the first message
 and can be lost when a long session is compacted.
+
+## Build mode (alpha)
+
+`asimov build` turns specs into planned, scaffolded projects:
+
+```bash
+asimov build spec.md https://wiki.example.com/api-spec design.pdf
+# reads the specs, has the agent write a plan, then stops
+asimov approve       # after reviewing .asimov-build/plan.yaml
+asimov resume        # continue after any stop
+asimov build --yes spec.md   # no approval stop
+```
+
+1. **Read specs** -- `.md` and `.txt` as they are, `.pdf` and URLs through
+   [ref][ref], `.docx` through pandoc, all saved as Markdown in
+   `.asimov-build/specs/`. A URL behind a login stops the build with the
+   `ref login` command to run.
+2. **Plan** -- one headless agent run writes `plan.yaml` (projects,
+   milestones, testable acceptance criteria) and `ASSUMPTIONS.md` (every
+   open decision and the choice made). Asimov checks the plan's shape.
+3. **Approve** -- the build stops so you can read and edit the plan.
+4. **Scaffold** -- one folder and git repo per project, with `.asimov/`,
+   the pre-commit hook, the specs in `docs/specs/`, the first milestone set
+   to `autonomous`, and `ref mcp` registered when ref is installed.
+
+In this alpha, start each scaffolded project with `asimov`; the unattended
+build loop and stop rules arrive in v3.0.0. Build mode needs
+`build.sandbox: true` in `~/.asimov/config.yaml`, set once, on purpose. It
+uses lighter defaults than interactive mode (effort `high`, no 1M thinking
+budget), configurable under `build:`.
+
+With ref's saved profile, an agent browses as you, signed in. In the
+sandbox, sign ref in only to the sites your specs need, never email,
+banking or work accounts.
+
+Design: [docs/design/build-mode.md](docs/design/build-mode.md).
 
 ## Config
 

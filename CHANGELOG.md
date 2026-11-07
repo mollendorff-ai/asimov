@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.0.0-alpha.1
+
+- New `asimov build <spec>...`: reads `.md`, `.txt`, `.pdf` (ref),
+  `.docx` (pandoc) and URL (ref) specs into `.asimov-build/specs/`; stops
+  before planning when a URL spec is behind a login or paywall
+- Planning: one headless agent run writes `plan.yaml` and
+  `ASSUMPTIONS.md`; Asimov validates the plan's shape (names, milestones,
+  deliverables, acceptance criteria)
+- Approval stop by default; `asimov approve` continues, `--yes` skips it
+- Scaffold: one folder and git repo per project with `.asimov/`, the
+  pre-commit hook, roadmap from the plan (first milestone `autonomous`),
+  specs in `docs/specs/`, `ref mcp` registered for Claude and Gemini
+- `asimov resume` continues from the recorded phase and re-reads specs
+  that were behind a login
+- Build mode requires `build.sandbox: true` and uses lighter defaults
+  (effort `high`, no 1M thinking budget)
+- Tests: 128 (25 new for build mode, with mock AI CLIs, ref and pandoc)
+
 ## 2.12.0
 
 - README reframed: personal tool for sandboxed full-autonomy use, with a

@@ -1,6 +1,6 @@
 # Build Mode Design
 
-Status: proposed for v3.0.0 · 2026-11-07
+Status: v3.0.0-alpha.1 implements phases 1 to 5 · 2026-11-07
 
 ## Summary
 
@@ -230,13 +230,16 @@ record arguments and write scripted outputs.
 - Pushing to GitHub or opening pull requests; repos stay local.
 - A web or graphical interface.
 
-## Open questions
+## Decisions made during implementation
 
-- Gemini and Codex headless flags (`gemini -p`, `codex exec`) need checking
-  against the current CLIs before implementation.
-- Whether `bin/asimov` stays one file or build mode moves to
-  `lib/build.sh`; the script would grow from about 630 to about 1,000
-  lines.
+- Headless commands: `claude -p`, `gemini -p`, and
+  `codex exec --skip-git-repo-check` (the plan runs outside a git repo).
+- Build mode stays in `bin/asimov` for the alpha (about 1,100 lines), so
+  install and update keep shipping one script. Revisit when the execute
+  loop lands.
+- The plan run gets no protocols; its prompt carries the full instructions.
+- The scaffold makes no commit; the agent's first commit goes through the
+  pre-commit gate like every other.
 
 ## Delivery
 
