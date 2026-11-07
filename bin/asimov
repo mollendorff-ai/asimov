@@ -3,7 +3,7 @@
 # Personal tool, built for sandboxed environments. Claude Code, Gemini CLI, Codex CLI.
 set -euo pipefail
 
-ASIMOV_VERSION="2.12.0"
+ASIMOV_VERSION="3.0.0-alpha.1"
 ASIMOV_REPO="mollendorff-ai/asimov"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
@@ -582,6 +582,477 @@ cmd_update() {
     echo "Run 'asimov migrate' in each project to refresh its pre-commit hook."
 }
 
+# ─── Build mode (v3) ─────────────────────────────────────────────────────
+# asimov build <spec>... : ingest specs, plan, stop for approval, scaffold.
+# Design: docs/design/build-mode.md
+
+BUILD_DIR=""
+BUILD_STATE=""
+
+build_init_paths() {
+    BUILD_DIR="$(cd "$1" && pwd)"
+    BUILD_STATE="${BUILD_DIR}/.asimov-build"
+}
+
+state_file() { echo "${BUILD_STATE}/state.yaml"; }
+
+state_get() {
+    cfg_get "$(state_file)" ".$1"
+}
+
+state_set() {
+    local key="$1" val="$2"
+    VAL="$val" yq -i ".${key} = strenv(VAL)" "$(state_file)"
+}
+
+build_fail() {
+    echo "build: $*" >&2
+    exit 1
+}
+
+# Tools a build needs, given its specs
+build_check_tools() {
+    local ai="$1"; shift
+    local missing=() need_ref=0 need_pandoc=0 s
+    for s in "$@"; do
+        case "$s" in
+            http://*|https://*|*.pdf|*.PDF) need_ref=1 ;;
+            *.docx|*.DOCX) need_pandoc=1 ;;
+        esac
+    done
+    command -v git &>/dev/null || missing+=("git")
+    command -v "$ai" &>/dev/null || missing+=("$ai")
+    [ "$need_ref" -eq 1 ] && ! command -v ref &>/dev/null && missing+=("ref (for PDF and URL specs: https://github.com/mollendorff-ai/ref)")
+    [ "$need_pandoc" -eq 1 ] && ! command -v pandoc &>/dev/null && missing+=("pandoc (for .docx specs: brew install pandoc)")
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "build: missing tools:" >&2
+        printf '  %s\n' "${missing[@]}" >&2
+        exit 1
+    fi
+}
+
+build_check_sandbox() {
+    local ack
+    ack="$(cfg_get "$ASIMOV_GLOBAL_CONFIG" '.build.sandbox')"
+    if [ "$ack" != "true" ]; then
+        cat >&2 << EOF
+build: build mode runs an AI agent with no approval prompts, unattended.
+Run it only in a sandbox (VM, container, throwaway machine). When you are in
+one, say so once by adding this to ${ASIMOV_GLOBAL_CONFIG}:
+
+build:
+  sandbox: true
+EOF
+        exit 1
+    fi
+}
+
+# Ref JSON (fetch or pdf) on stdin -> Markdown on stdout
+ref_json_to_md() {
+    jq -r '
+        (if type == "array" then .[0] else . end) as $p
+        | ("# " + ($p.title // $p.url // "Spec")),
+          "",
+          ($p.sections[]? | (("#" * ([.level + 1, 6] | min)) + " " + .heading), "", .content, ""),
+          ($p.code[]? | ("```" + (.lang // "")), .source, "```", "")
+    '
+}
+
+ref_json_status() {
+    jq -r '(if type == "array" then .[0] else . end) | .status // "ok"'
+}
+
+spec_slug() {
+    local s="$1"
+    s="${s#http://}"; s="${s#https://}"
+    s="$(basename "$s")"
+    s="${s%.*}"
+    s="$(printf '%s' "$s" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
+    [ -z "$s" ] && s="spec"
+    printf '%s' "${s:0:40}"
+}
+
+# Copy or convert every spec into .asimov-build/specs/ as Markdown
+build_ingest() {
+    local specs_dir="${BUILD_STATE}/specs" sources="${BUILD_STATE}/sources.yaml"
+    mkdir -p "$specs_dir"
+    echo "sources: []" > "$sources"
+    local i=0 s out type status json
+    for s in "$@"; do
+        i=$((i + 1))
+        out="$(printf '%02d' "$i")-$(spec_slug "$s").md"
+        status="ok"
+        case "$s" in
+            http://*|https://*)
+                type="url"
+                json="$(ref fetch --max-chars 0 --max-sections 0 "$s" 2>/dev/null)" \
+                    || build_fail "ref fetch failed for ${s}"
+                status="$(printf '%s' "$json" | ref_json_status)"
+                printf '%s' "$json" | ref_json_to_md > "${specs_dir}/${out}"
+                ;;
+            *)
+                [ -f "$s" ] || build_fail "spec not found: ${s}"
+                s="$(cd "$(dirname "$s")" && pwd)/$(basename "$s")"
+                case "$s" in
+                    *.md|*.markdown|*.txt|*.MD|*.TXT)
+                        type="text"; cp "$s" "${specs_dir}/${out}" ;;
+                    *.pdf|*.PDF)
+                        type="pdf"
+                        json="$(ref pdf "$s" 2>/dev/null)" || build_fail "ref pdf failed for ${s}"
+                        printf '%s' "$json" | ref_json_to_md > "${specs_dir}/${out}"
+                        ;;
+                    *.docx|*.DOCX)
+                        type="docx"
+                        pandoc -t gfm "$s" -o "${specs_dir}/${out}" || build_fail "pandoc failed for ${s}"
+                        ;;
+                    *) build_fail "unsupported spec type: ${s} (use .md, .txt, .pdf, .docx or a URL)" ;;
+                esac
+                ;;
+        esac
+        SPEC="$out" SRC="$s" TYPE="$type" STATUS="$status" \
+            yq -i '.sources += [{"spec": strenv(SPEC), "source": strenv(SRC), "type": strenv(TYPE), "status": strenv(STATUS)}]' "$sources"
+        echo "  ${out}  ← ${s}"
+    done
+}
+
+# Any URL spec behind a wall stops the build before planning
+build_check_sources() {
+    local sources="${BUILD_STATE}/sources.yaml" bad
+    bad="$(yq -r '.sources[] | select(.status != "ok") | .status + " " + .source' "$sources")"
+    [ -z "$bad" ] && return 0
+    echo "build: some specs could not be read:" >&2
+    while IFS= read -r line; do
+        local st="${line%% *}" url="${line#* }"
+        case "$st" in
+            login|paywall)
+                echo "  ${url}: ${st}. Run: ref login ${url}  (sign in, quit Chrome), then: asimov resume" >&2 ;;
+            *)
+                echo "  ${url}: ${st}. Fix or remove this spec, then run asimov build again." >&2 ;;
+        esac
+    done <<< "$bad"
+    exit 1
+}
+
+# Load agent settings for build mode into AGENT_ARGS and the environment.
+# build.<ai>.* wins; args and model fall back to launch.<ai>.*; env does not
+# (build mode avoids the interactive maximum-thinking defaults).
+load_build_agent() {
+    local ai="$1" model args_list env_list
+    model="$(cfg_get "$ASIMOV_GLOBAL_CONFIG" ".build.${ai}.model")"
+    [ -z "$model" ] && model="$(cfg_get "$ASIMOV_GLOBAL_CONFIG" ".launch.${ai}.model")"
+    args_list="$(cfg_list "$ASIMOV_GLOBAL_CONFIG" ".build.${ai}.args")"
+    [ -z "$args_list" ] && args_list="$(cfg_list "$ASIMOV_GLOBAL_CONFIG" ".launch.${ai}.args")"
+    if [ -z "$args_list" ]; then
+        case "$ai" in
+            claude) args_list="--dangerously-skip-permissions" ;;
+            gemini) args_list="--approval-mode=yolo" ;;
+            codex)  args_list="--full-auto" ;;
+        esac
+    fi
+    env_list="$(cfg_env "$ASIMOV_GLOBAL_CONFIG" ".build.${ai}.env")"
+    if [ -z "$env_list" ]; then
+        case "$ai" in claude) env_list="CLAUDE_CODE_EFFORT_LEVEL=high" ;; esac
+    fi
+    [ -z "$model" ] && [ "$ai" = "claude" ] && model="opus"
+
+    while IFS= read -r line; do
+        # shellcheck disable=SC2163
+        [ -n "$line" ] && export "$line"
+    done <<< "$env_list"
+    AGENT_ARGS=()
+    while IFS= read -r arg; do
+        [ -n "$arg" ] && AGENT_ARGS+=("$arg")
+    done <<< "$args_list"
+    [ -n "$model" ] && AGENT_ARGS+=("--model" "$model")
+    return 0
+}
+
+# Run the agent headless in a folder: agent_run ai dir prompt logfile
+agent_run() {
+    local ai="$1" dir="$2" prompt="$3" log="$4"
+    mkdir -p "$(dirname "$log")"
+    (
+        cd "$dir"
+        case "$ai" in
+            claude) claude "${AGENT_ARGS[@]}" -p "$prompt" ;;
+            gemini) gemini "${AGENT_ARGS[@]}" -p "$prompt" ;;
+            codex)  codex exec "${AGENT_ARGS[@]}" --skip-git-repo-check "$prompt" ;;
+        esac
+    ) > "$log" 2>&1
+}
+
+BUILD_PLAN_PROMPT='You are planning a software build. Read every file in specs/ in this folder; they are the specifications. Write exactly two files in this folder and nothing else: plan.yaml and ASSUMPTIONS.md. Do not write code, do not create folders, do not run git.
+
+plan.yaml must have exactly this shape:
+
+projects:
+  - name: my-project        # folder name: lowercase letters, digits, dashes
+    description: "One sentence: what it is and who it is for."
+    stack: [rust]            # languages and main tools
+    milestones:              # in build order, each small enough for a few agent sessions
+      - version: "0.1.0"
+        title: "Short title"
+        deliverables:
+          - "Concrete thing that will exist"
+        acceptance:
+          - "Testable statement a test can check"
+
+Rules:
+- One project unless the specs describe separate deliverables (for example a server and a client); then one project per deliverable.
+- Versions are semantic versions starting at 0.1.0 and increasing.
+- Every acceptance item must be checkable by an automated test.
+- Never stop to ask a question. For every decision the specs leave open, choose and record it in ASSUMPTIONS.md as a bullet: the question, your choice, and why.'
+
+# Check plan.yaml has the shape scaffold needs; print problems, return 1 if any
+build_validate_plan() {
+    local plan="${BUILD_STATE}/plan.yaml" problems=() n
+    [ -f "$plan" ] || { echo "plan.yaml was not written"; return 1; }
+    yq -e '.' "$plan" &>/dev/null || { echo "plan.yaml is not valid YAML"; return 1; }
+    n="$(yq '.projects // [] | length' "$plan")"
+    [ "$n" -gt 0 ] || problems+=("no projects")
+    local name seen=" "
+    while IFS= read -r name; do
+        [ -z "$name" ] && continue
+        [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || problems+=("bad project name '${name}' (lowercase letters, digits, dashes)")
+        [[ "$seen" == *" ${name} "* ]] && problems+=("duplicate project name '${name}'")
+        seen="${seen}${name} "
+    done < <(yq -r '.projects // [] | .[].name // ""' "$plan")
+    n="$(yq '[.projects // [] | .[] | select((.name // "") == "")] | length' "$plan")"
+    [ "$n" -eq 0 ] || problems+=("${n} project(s) without a name")
+    n="$(yq '[.projects // [] | .[] | select((.milestones // []) | length == 0)] | length' "$plan")"
+    [ "$n" -eq 0 ] || problems+=("${n} project(s) without milestones")
+    n="$(yq '[.projects // [] | .[].milestones // [] | .[] | select((.version // "") == "" or (.title // "") == "" or ((.deliverables // []) | length) == 0 or ((.acceptance // []) | length) == 0)] | length' "$plan")"
+    [ "$n" -eq 0 ] || problems+=("${n} milestone(s) missing version, title, deliverables or acceptance")
+    [ -f "${BUILD_STATE}/ASSUMPTIONS.md" ] || problems+=("ASSUMPTIONS.md was not written")
+    if [ ${#problems[@]} -gt 0 ]; then
+        printf '%s\n' "${problems[@]}"
+        return 1
+    fi
+    return 0
+}
+
+build_plan() {
+    local ai log problems
+    ai="$(state_get ai)"
+    log="${BUILD_STATE}/logs/plan-$(date +%Y%m%d-%H%M%S).log"
+    rm -f "${BUILD_STATE}/plan.yaml" "${BUILD_STATE}/ASSUMPTIONS.md"
+    echo "Planning with ${ai}..."
+    load_build_agent "$ai"
+    if ! agent_run "$ai" "$BUILD_STATE" "$BUILD_PLAN_PROMPT" "$log"; then
+        build_fail "the planning run failed. Log: ${log}. Run asimov resume to retry."
+    fi
+    if ! problems="$(build_validate_plan)"; then
+        echo "build: the plan is not usable:" >&2
+        printf '%s\n' "$problems" | sed 's/^/  - /' >&2
+        echo "Log: ${log}. Fix .asimov-build/plan.yaml by hand and run asimov approve, or run asimov resume to plan again." >&2
+        state_set phase "plan_invalid"
+        exit 1
+    fi
+    state_set phase "planned"
+}
+
+build_summary() {
+    local plan="${BUILD_STATE}/plan.yaml" assumptions
+    assumptions="$(grep -c '^[[:space:]]*[-*] ' "${BUILD_STATE}/ASSUMPTIONS.md" || true)"
+    echo ""
+    echo "Plan:"
+    yq -r '.projects[] | "  " + .name + " (" + ((.stack // []) | join(", ")) + "): " + ((.milestones | length) | tostring) + " milestone(s)"' "$plan"
+    # shellcheck disable=SC2016  # $n is a yq variable
+    yq -r '.projects[] | .name as $n | .milestones[] | "    " + $n + " " + .version + "  " + .title' "$plan"
+    echo "  Assumptions: ${assumptions} (in .asimov-build/ASSUMPTIONS.md)"
+}
+
+build_stop_for_approval() {
+    state_set phase "awaiting_approval"
+    build_summary
+    cat << EOF
+
+Review .asimov-build/plan.yaml and .asimov-build/ASSUMPTIONS.md in
+${BUILD_DIR}. Edit them if needed, then run:
+
+  asimov approve ${BUILD_DIR}
+EOF
+}
+
+# Create one folder + git repo per project, with .asimov/ from the plan
+build_scaffold() {
+    local plan="${BUILD_STATE}/plan.yaml" ai count i name dir
+    ai="$(state_get ai)"
+    count="$(yq '.projects | length' "$plan")"
+    for ((i = 0; i < count; i++)); do
+        name="$(yq -r ".projects[$i].name" "$plan")"
+        dir="${BUILD_DIR}/${name}"
+        if [ -d "${dir}/.asimov" ]; then
+            echo "  ${name}/ already scaffolded, skipping"
+            continue
+        fi
+        if [ -d "$dir" ] && [ -n "$(ls -A "$dir")" ]; then
+            build_fail "${dir} exists and is not empty; move it away or rename the project in plan.yaml"
+        fi
+        mkdir -p "$dir"
+        git -C "$dir" init -q
+        (cd "$dir" && cmd_init "$name") > "${BUILD_STATE}/logs/scaffold-${name}.log" 2>&1 \
+            || build_fail "asimov init failed in ${dir}; see .asimov-build/logs/scaffold-${name}.log"
+
+        yq -i ".description = (load(\"${plan}\") | .projects[$i].description // \"\") |
+               .stack = (load(\"${plan}\") | .projects[$i].stack // [])" "${dir}/.asimov/project.yaml"
+        yq -P ".projects[$i] | {\"current\": (.milestones[0] + {\"status\": \"autonomous\"}), \"backlog\": .milestones[1:]}" \
+            "$plan" > "${dir}/.asimov/roadmap.yaml"
+
+        mkdir -p "${dir}/docs/specs"
+        cp "${BUILD_STATE}"/specs/*.md "${dir}/docs/specs/"
+        cp "${BUILD_STATE}/ASSUMPTIONS.md" "${dir}/docs/ASSUMPTIONS.md"
+
+        if command -v ref &>/dev/null; then
+            case "$ai" in
+                claude) printf '{\n  "mcpServers": {\n    "ref": {"command": "ref", "args": ["mcp"]}\n  }\n}\n' > "${dir}/.mcp.json" ;;
+                gemini) mkdir -p "${dir}/.gemini"
+                        printf '{\n  "mcpServers": {\n    "ref": {"command": "ref", "args": ["mcp"]}\n  }\n}\n' > "${dir}/.gemini/settings.json" ;;
+            esac
+        fi
+        echo "  ${name}/  git repo, .asimov/, docs/specs/"
+    done
+    state_set phase "scaffolded"
+    cat << EOF
+
+Scaffolded in ${BUILD_DIR}. Each roadmap's first milestone is set to
+autonomous. The unattended build loop arrives in v3.0.0; until then, start
+a project with:
+
+  cd ${BUILD_DIR}/$(yq -r '.projects[0].name' "$plan") && asimov
+EOF
+}
+
+# Run the build from whatever phase state.yaml records
+build_continue() {
+    local phase
+    phase="$(state_get phase)"
+    case "$phase" in
+        ingested)
+            build_plan
+            build_continue ;;
+        planned)
+            if [ "$(state_get approved)" = "true" ]; then
+                build_scaffold
+            else
+                build_stop_for_approval
+            fi ;;
+        plan_invalid)
+            build_plan
+            build_continue ;;
+        awaiting_approval)
+            build_stop_for_approval ;;
+        approved)
+            build_scaffold ;;
+        scaffolded)
+            echo "Already scaffolded. The unattended build loop arrives in v3.0.0." ;;
+        *)
+            build_fail "unknown build phase '${phase}' in $(state_file)" ;;
+    esac
+}
+
+cmd_build() {
+    check_deps
+    ensure_global_config
+    local dir="." ai="" yes=0 specs=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dir)  dir="${2:?--dir needs a path}"; shift 2 ;;
+            --ai)   ai="${2:?--ai needs claude, gemini or codex}"; shift 2 ;;
+            --yes)  yes=1; shift ;;
+            -h|--help) show_build_help; return 0 ;;
+            -*)     build_fail "unknown option $1 (asimov build --help)" ;;
+            *)      specs+=("$1"); shift ;;
+        esac
+    done
+    [ ${#specs[@]} -gt 0 ] || build_fail "no specs given (asimov build --help)"
+    [ -z "$ai" ] && ai="$(cfg_get "$ASIMOV_GLOBAL_CONFIG" '.build.default_ai')"
+    [ -z "$ai" ] && ai="$(cfg_get "$ASIMOV_GLOBAL_CONFIG" '.launch.default_ai')"
+    [ -z "$ai" ] && ai="claude"
+    case "$ai" in claude|gemini|codex) ;; *) build_fail "unknown AI '${ai}' (claude, gemini or codex)" ;; esac
+
+    build_check_sandbox
+    build_check_tools "$ai" "${specs[@]}"
+    mkdir -p "$dir"
+    build_init_paths "$dir"
+    if [ -f "$(state_file)" ]; then
+        build_fail "${BUILD_STATE} already exists; run asimov resume, or remove it to start over"
+    fi
+    mkdir -p "${BUILD_STATE}/logs"
+    printf 'phase: new\n' > "$(state_file)"
+    state_set ai "$ai"
+    state_set approved "$([ "$yes" -eq 1 ] && echo true || echo false)"
+    state_set started "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    echo "Reading specs..."
+    build_ingest "${specs[@]}"
+    build_check_sources
+    state_set phase "ingested"
+    build_continue
+}
+
+cmd_approve() {
+    check_deps
+    build_init_paths "${1:-.}"
+    [ -f "$(state_file)" ] || build_fail "no build in ${BUILD_DIR} (no .asimov-build/state.yaml)"
+    local phase problems
+    phase="$(state_get phase)"
+    case "$phase" in
+        awaiting_approval|planned|plan_invalid) ;;
+        *) build_fail "nothing to approve (phase: ${phase})" ;;
+    esac
+    if ! problems="$(build_validate_plan)"; then
+        echo "build: the plan is not usable:" >&2
+        printf '%s\n' "$problems" | sed 's/^/  - /' >&2
+        exit 1
+    fi
+    state_set approved "true"
+    state_set phase "approved"
+    echo "Plan approved."
+    build_continue
+}
+
+cmd_resume() {
+    check_deps
+    build_init_paths "${1:-.}"
+    [ -f "$(state_file)" ] || build_fail "no build in ${BUILD_DIR} (no .asimov-build/state.yaml)"
+    local ai
+    ai="$(state_get ai)"
+    build_check_sandbox
+    build_check_tools "$ai"
+    # A spec behind a login: refetch URL specs that were not ok
+    if [ "$(yq '[.sources[] | select(.status != "ok")] | length' "${BUILD_STATE}/sources.yaml")" -gt 0 ]; then
+        local urls=() src
+        while IFS= read -r src; do
+            urls+=("$src")
+        done < <(yq -r '.sources[].source' "${BUILD_STATE}/sources.yaml")
+        echo "Re-reading specs..."
+        build_ingest "${urls[@]}"
+        build_check_sources
+        state_set phase "ingested"
+    fi
+    build_continue
+}
+
+show_build_help() {
+    cat << 'EOF'
+asimov build [options] <spec>...   read specs, plan, stop for approval
+asimov approve [dir]               approve the plan and scaffold the projects
+asimov resume [dir]                continue after a stop or a crash
+
+Specs: .md, .txt, .pdf (needs ref), .docx (needs pandoc), or a URL (needs ref).
+
+Options:
+    --dir <path>    build folder (default: current folder)
+    --ai <name>     claude, gemini or codex (default: build.default_ai,
+                    then launch.default_ai)
+    --yes           skip the approval stop
+
+Needs build.sandbox: true in ~/.asimov/config.yaml (sandbox only).
+Design: docs/design/build-mode.md
+EOF
+}
+
 # ─── Help ────────────────────────────────────────────────────────────────
 
 show_help() {
@@ -593,6 +1064,9 @@ USAGE:
     asimov init [name]  Initialize .asimov/ in current project
     asimov migrate      Update .asimov/ to latest format
     asimov update       Install the latest tagged release (checksum-verified)
+    asimov build <spec>...  Plan projects from specs, stop for approval, scaffold
+    asimov approve [dir]    Approve a build plan and scaffold its projects
+    asimov resume [dir]     Continue a stopped build (asimov build --help)
     asimov --help       Show this help
     asimov --version    Show version
 
@@ -624,6 +1098,9 @@ case "${1:-}" in
     init)       shift; cmd_init "$@" ;;
     migrate)    cmd_migrate ;;
     update)     cmd_update ;;
+    build)      shift; cmd_build "$@" ;;
+    approve)    shift; cmd_approve "$@" ;;
+    resume)     shift; cmd_resume "$@" ;;
     --help|-h)  show_help ;;
     --version)  echo "asimov ${ASIMOV_VERSION}" ;;
     "")         launch_ai ;;
