@@ -2,16 +2,24 @@
 # See CHANGELOG.md for release history.
 
 current:
-  version: "2.13.0"
-  title: "status + config commands"
+  version: "3.0.0"
+  title: "build mode: from specs to finished repos"
   status: pending
+  design: "docs/design/build-mode.md"
   deliverables:
-    - "asimov status — show protocols, roadmap, pre-commit, AI CLI, config issues"
-    - "asimov config get|set — read/write global and project config without manual YAML"
-    - "Tests for both commands"
+    - "v3.0.0-alpha: asimov build — ingest (md, txt, pdf via ref, docx via pandoc, URL via ref), preflight, plan.yaml + ASSUMPTIONS.md, approval stop, asimov approve"
+    - "v3.0.0-alpha: scaffold — project folders, git init, asimov init, roadmaps from plan, ref mcp per project"
+    - "v3.0.0: execute loop per project with milestone promotion, stop rules (loops, hours, spend, stall, BLOCKED.md), asimov resume"
+    - "v3.0.0: release check with ref check-links; build defaults in config; README section with Ref profile warning"
+    - "Tests with mock AI CLIs, ref and pandoc for every phase and stop rule"
 
 previous:
   version: "2.12.0"
   title: "evaluation fixes: per-AI protocols, safe migrate, verified updates"
 
-backlog: []
+backlog:
+  - version: "3.1.0"
+    title: "status + config commands"
+    deliverables:
+      - "asimov status — show protocols, roadmap, pre-commit, AI CLI, config issues"
+      - "asimov config get|set — read/write global and project config without manual YAML"
