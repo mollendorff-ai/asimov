@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Asimov - AI guardrails: protocols + quality gate
-# Vendor-neutral launcher for Claude Code, Gemini CLI, Codex CLI
+# Asimov - launch AI coding CLIs in full-autonomy mode with protocols + quality gate
+# Personal tool, built for sandboxed environments. Claude Code, Gemini CLI, Codex CLI.
 set -euo pipefail
 
-ASIMOV_VERSION="2.11.0"
+ASIMOV_VERSION="2.12.0"
+ASIMOV_REPO="mollendorff-ai/asimov"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
 ASIMOV_PROJECT_CONFIG=".asimov/launch.yaml"
+ASIMOV_PROTOCOLS=(freshness.json sycophancy.json sprint.json coding-standards.json)
+ASIMOV_WARMUP_PROMPT="Read .asimov/roadmap.yaml. One-line summary of current sprint."
 
 # Resolve data directory (protocols, hooks)
 if [ -n "${ASIMOV_DATA:-}" ]; then
@@ -35,6 +38,15 @@ check_deps() {
                 jq) echo "  brew install jq   # or: apt install jq" >&2 ;;
             esac
         done
+        exit 1
+    fi
+    # Asimov needs mikefarah/yq (Go). The Python yq that `apt install yq`
+    # provides on Debian/Ubuntu has a different syntax and breaks config edits.
+    if ! yq --version 2>&1 | grep -qi mikefarah; then
+        echo "Wrong yq: asimov needs mikefarah/yq v4 (the Go version)." >&2
+        echo "Found: $(yq --version 2>&1 | head -1)" >&2
+        echo "Install: brew install yq  # or: go install github.com/mikefarah/yq/v4@latest" >&2
+        echo "         or download from https://github.com/mikefarah/yq/releases" >&2
         exit 1
     fi
 }
@@ -87,7 +99,7 @@ launch:
 
   gemini:
     args:
-      - --yolo
+      - --approval-mode=yolo
 
   codex:
     args:
@@ -96,10 +108,18 @@ YAML
     echo "Created global config: ${ASIMOV_GLOBAL_CONFIG}"
 }
 
+# Add env vars introduced after a config was created. Only writes when a key
+# is actually missing, so the file (and its comments) is left alone otherwise.
 migrate_global_config() {
     [ -f "$ASIMOV_GLOBAL_CONFIG" ] || return 0
-    yq -i '.launch.claude.env.CLAUDE_CODE_EFFORT_LEVEL = (.launch.claude.env.CLAUDE_CODE_EFFORT_LEVEL // "max")' "$ASIMOV_GLOBAL_CONFIG"
-    yq -i '.launch.claude.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = (.launch.claude.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS // "1")' "$ASIMOV_GLOBAL_CONFIG"
+    local key default
+    for pair in "CLAUDE_CODE_EFFORT_LEVEL=max" "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"; do
+        key="${pair%%=*}"
+        default="${pair#*=}"
+        if ! yq -e ".launch.claude.env.${key}" "$ASIMOV_GLOBAL_CONFIG" &>/dev/null; then
+            yq -i ".launch.claude.env.${key} = \"${default}\"" "$ASIMOV_GLOBAL_CONFIG"
+        fi
+    done
 }
 
 # ─── System prompt builder ───────────────────────────────────────────────
@@ -208,7 +228,7 @@ launch_ai() {
     if [ -z "$args_list" ]; then
         case "$ai" in
             claude) args_list="--dangerously-skip-permissions" ;;
-            gemini) args_list="--yolo" ;;
+            gemini) args_list="--approval-mode=yolo" ;;
             codex)  args_list="--full-auto" ;;
         esac
     fi
@@ -234,7 +254,7 @@ launch_ai() {
 
     # Ensure protocols are up to date (sync missing from data dir)
     if [ -d .asimov ]; then
-        for f in freshness.json sycophancy.json sprint.json coding-standards.json; do
+        for f in "${ASIMOV_PROTOCOLS[@]}"; do
             if [ ! -f ".asimov/${f}" ] && [ -f "${DATA_DIR}/protocols/${f}" ]; then
                 cp "${DATA_DIR}/protocols/${f}" ".asimov/${f}"
             fi
@@ -250,27 +270,51 @@ launch_ai() {
         fi
     fi
 
-    # Inject protocols via system prompt (never compacted)
     local sys_prompt
     sys_prompt=$(build_system_prompt)
-    if [ -n "$sys_prompt" ]; then
+
+    # Claude: protocols go in the system prompt (outside the compacted
+    # transcript), then a warmup turn reads the roadmap, then interactive.
+    if [ "$ai" = "claude" ]; then
+        [ -n "$sys_prompt" ] && args+=("--append-system-prompt" "$sys_prompt")
+        if [ -f .asimov/roadmap.yaml ]; then
+            echo "Warming up..."
+            "$ai" "${args[@]}" -p "$ASIMOV_WARMUP_PROMPT"
+            echo ""
+            exec "$ai" "${args[@]}" --continue
+        fi
+        echo "Launching ${ai}..."
+        exec "$ai" "${args[@]}"
+    fi
+
+    # Gemini and Codex have no append-system-prompt flag, so protocols and
+    # the roadmap warmup are sent as the first message of the interactive
+    # session. Unlike Claude's system prompt, this can be lost on compaction.
+    local first_msg
+    first_msg=$(build_first_message "$sys_prompt")
+    echo "Launching ${ai}..."
+    if [ -n "$first_msg" ]; then
         case "$ai" in
-            claude) args+=("--append-system-prompt" "$sys_prompt") ;;
+            gemini) exec "$ai" "${args[@]}" --prompt-interactive "$first_msg" ;;
+            codex)  exec "$ai" "${args[@]}" "$first_msg" ;;
         esac
     fi
-
-    # Two-step launch for Claude: warmup (read roadmap) then interactive
-    if [ "$ai" = "claude" ] && [ -f .asimov/roadmap.yaml ]; then
-        echo "Warming up..."
-        "$ai" "${args[@]}" \
-            -p "Read .asimov/roadmap.yaml. One-line summary of current sprint."
-        echo ""
-        exec "$ai" "${args[@]}" --continue
-    fi
-
-    # Direct launch for other AIs or when no roadmap exists
-    echo "Launching ${ai}..."
     exec "$ai" "${args[@]}"
+}
+
+# First interactive message for AIs without a system-prompt flag
+build_first_message() {
+    local sys_prompt="$1" msg=""
+    if [ -n "$sys_prompt" ]; then
+        msg="Follow these project rules for the whole session (JSON): ${sys_prompt}"
+    fi
+    if [ -f .asimov/roadmap.yaml ]; then
+        msg="${msg:+${msg}
+
+}${ASIMOV_WARMUP_PROMPT}"
+    fi
+    [ -n "$msg" ] && printf '%s' "$msg"
+    return 0
 }
 
 # ─── Init ────────────────────────────────────────────────────────────────
@@ -295,7 +339,7 @@ cmd_init() {
 
     # Create .asimov/ with 4 protocols
     mkdir -p .asimov
-    for f in freshness.json sycophancy.json sprint.json coding-standards.json; do
+    for f in "${ASIMOV_PROTOCOLS[@]}"; do
         if [ -f "${DATA_DIR}/protocols/${f}" ]; then
             cp "${DATA_DIR}/protocols/${f}" ".asimov/${f}"
         fi
@@ -382,12 +426,11 @@ cmd_migrate() {
         fi
     done
 
-    # Remove old bootstrap files from project root
+    # Old asimov versions generated bootstrap files in the project root.
+    # Never delete them: they may hold your own instructions now.
     for f in CLAUDE.md GEMINI.md CODEX.md; do
         if [ -f "$f" ]; then
-            rm "$f"
-            echo "Removed ${f}"
-            changed=1
+            echo "Note: ${f} kept. Older asimov versions generated it; delete it yourself if you no longer need it."
         fi
     done
 
@@ -421,7 +464,7 @@ cmd_migrate() {
     fi
 
     # Ensure 4 protocols exist (copy missing ones from data dir)
-    for f in freshness.json sycophancy.json sprint.json coding-standards.json; do
+    for f in "${ASIMOV_PROTOCOLS[@]}"; do
         if [ ! -f ".asimov/${f}" ] && [ -f "${DATA_DIR}/protocols/${f}" ]; then
             cp "${DATA_DIR}/protocols/${f}" ".asimov/${f}"
             echo "Added .asimov/${f}"
@@ -465,21 +508,34 @@ cmd_migrate() {
 
 # ─── Update ───────────────────────────────────────────────────────────────
 
+# Release files, relative to the repo root. Checked against SHA256SUMS.
+release_files() {
+    echo "bin/asimov"
+    echo "hooks/pre-commit"
+    for f in "${ASIMOV_PROTOCOLS[@]}"; do echo "protocols/${f}"; done
+}
+
+sha256_of() {
+    if command -v sha256sum &>/dev/null; then
+        sha256sum "$1" | cut -d' ' -f1
+    else
+        shasum -a 256 "$1" | cut -d' ' -f1
+    fi
+}
+
 cmd_update() {
-    local repo="https://raw.githubusercontent.com/mollendorff-ai/asimov/main"
+    check_deps
+    local api="https://api.github.com/repos/${ASIMOV_REPO}/releases/latest"
     local bin_path
     bin_path="$(realpath "$0")"
 
     echo "Checking for updates..."
-    local latest_script
-    latest_script="$(curl -fsSL "${repo}/bin/asimov")" || {
-        echo "update: failed to fetch latest release" >&2; exit 1
-    }
-    local latest_version
-    latest_version="$(printf '%s\n' "$latest_script" | grep '^ASIMOV_VERSION=' | head -1 | cut -d'"' -f2)"
-    if [ -z "$latest_version" ]; then
-        echo "update: could not determine latest version" >&2; exit 1
+    local tag
+    tag="$(curl -fsSL "$api" | jq -r '.tag_name // empty')" || tag=""
+    if [ -z "$tag" ]; then
+        echo "update: failed to fetch latest release from ${api}" >&2; exit 1
     fi
+    local latest_version="${tag#v}"
 
     if [ "$latest_version" = "$ASIMOV_VERSION" ]; then
         echo "Already up to date. (v${ASIMOV_VERSION})"
@@ -488,48 +544,68 @@ cmd_update() {
 
     echo "Updating asimov v${ASIMOV_VERSION} → v${latest_version}..."
 
-    # Replace binary atomically
-    local tmp; tmp="$(mktemp)"
-    printf '%s\n' "$latest_script" > "$tmp"
-    chmod +x "$tmp"
-    mv "$tmp" "$bin_path"
+    # Download everything for that tag into a staging dir, verify, then install
+    local raw="https://raw.githubusercontent.com/${ASIMOV_REPO}/${tag}"
+    local sums_url="https://github.com/${ASIMOV_REPO}/releases/download/${tag}/SHA256SUMS"
+    local stage; stage="$(mktemp -d)"
+    if ! curl -fsSL "$sums_url" -o "${stage}/SHA256SUMS"; then
+        rm -rf "$stage"
+        echo "update: failed to fetch SHA256SUMS for ${tag}" >&2; exit 1
+    fi
+    local f expected actual
+    while IFS= read -r f; do
+        mkdir -p "${stage}/$(dirname "$f")"
+        if ! curl -fsSL "${raw}/${f}" -o "${stage}/${f}"; then
+            rm -rf "$stage"
+            echo "update: failed to fetch ${f}" >&2; exit 1
+        fi
+        expected="$(awk -v p="$f" '$2 == p {print $1}' "${stage}/SHA256SUMS")"
+        actual="$(sha256_of "${stage}/${f}")"
+        if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            rm -rf "$stage"
+            echo "update: checksum mismatch for ${f}; nothing was changed" >&2; exit 1
+        fi
+    done < <(release_files)
 
-    # Update protocols
-    for f in freshness.json sycophancy.json sprint.json coding-standards.json; do
-        curl -fsSL "${repo}/protocols/${f}" -o "${DATA_DIR}/protocols/${f}"
+    # All verified: install
+    mkdir -p "${DATA_DIR}/protocols" "${DATA_DIR}/hooks"
+    for f in "${ASIMOV_PROTOCOLS[@]}"; do
+        cp "${stage}/protocols/${f}" "${DATA_DIR}/protocols/${f}"
     done
-
-    # Update pre-commit hook
-    curl -fsSL "${repo}/hooks/pre-commit" -o "${DATA_DIR}/hooks/pre-commit"
+    cp "${stage}/hooks/pre-commit" "${DATA_DIR}/hooks/pre-commit"
     chmod +x "${DATA_DIR}/hooks/pre-commit"
+    chmod +x "${stage}/bin/asimov"
+    mv "${stage}/bin/asimov" "$bin_path"
+    rm -rf "$stage"
 
     echo "Updated to v${latest_version}."
+    echo "Run 'asimov migrate' in each project to refresh its pre-commit hook."
 }
 
 # ─── Help ────────────────────────────────────────────────────────────────
 
 show_help() {
     cat << EOF
-asimov v${ASIMOV_VERSION} - AI guardrails: protocols + quality gate
+asimov v${ASIMOV_VERSION} - full-autonomy launcher for AI coding CLIs (sandbox use)
 
 USAGE:
     asimov              Launch AI CLI with protocols (default)
     asimov init [name]  Initialize .asimov/ in current project
     asimov migrate      Update .asimov/ to latest format
-    asimov update       Fetch the latest release from GitHub and replace in-place
+    asimov update       Install the latest tagged release (checksum-verified)
     asimov --help       Show this help
     asimov --version    Show version
 
 DEPENDENCIES:
-    yq                  YAML parser (brew install yq)
+    yq                  mikefarah/yq v4, the Go version (brew install yq)
     jq                  JSON parser (brew install jq)
 
 CONFIGURATION:
     Global:  ~/.asimov/config.yaml
     Project: .asimov/launch.yaml (overrides global)
 
-PROTOCOLS (injected via system prompt, never compacted):
-    .asimov/freshness.json          Use ref fetch for web content
+PROTOCOLS (Claude: system prompt; Gemini/Codex: first message):
+    .asimov/freshness.json          Prefer ref fetch for web content when installed
     .asimov/sycophancy.json         Truth over comfort
     .asimov/sprint.json             Autonomous mode triggers
     .asimov/coding-standards.json   Code quality principles
