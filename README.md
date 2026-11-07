@@ -64,7 +64,7 @@ asimov init        # scaffold .asimov/, install pre-commit hook
 asimov             # launch the AI with protocols + roadmap warmup
 asimov migrate     # bring an older .asimov/ up to date
 asimov update      # install the latest tagged release
-asimov build <spec>  # plan and scaffold projects from specs (alpha)
+asimov build <spec>  # specs to finished repos, unattended
 ```
 
 `asimov init` creates:
@@ -95,16 +95,16 @@ Claude Code is the primary target. Gemini CLI and Codex CLI have no flag to
 append to the system prompt, so their protocols arrive as the first message
 and can be lost when a long session is compacted.
 
-## Build mode (alpha)
+## Build mode
 
-`asimov build` turns specs into planned, scaffolded projects:
+`asimov build` turns specs into finished local git repos, unattended:
 
 ```bash
 asimov build spec.md https://wiki.example.com/api-spec design.pdf
 # reads the specs, has the agent write a plan, then stops
-asimov approve       # after reviewing .asimov-build/plan.yaml
-asimov resume        # continue after any stop
-asimov build --yes spec.md   # no approval stop
+asimov approve --max-usd 20   # after reviewing .asimov-build/plan.yaml
+asimov resume                 # continue after any stop
+asimov build --yes spec.md    # no approval stop
 ```
 
 1. **Read specs** -- `.md` and `.txt` as they are, `.pdf` and URLs through
@@ -116,14 +116,28 @@ asimov build --yes spec.md   # no approval stop
    open decision and the choice made). Asimov checks the plan's shape.
 3. **Approve** -- the build stops so you can read and edit the plan.
 4. **Scaffold** -- one folder and git repo per project, with `.asimov/`,
-   the pre-commit hook, the specs in `docs/specs/`, the first milestone set
-   to `autonomous`, and `ref mcp` registered when ref is installed.
+   the pre-commit hook, the specs in `docs/specs/`, and `ref mcp`
+   registered when ref is installed.
+5. **Build** -- for each project in turn, the agent runs headless on the
+   current milestone: tests from the acceptance criteria first, commits
+   through the quality gate, and marks the milestone released when done.
+   Asimov then checks README and docs links with `ref check-links` (broken
+   links send it back) and moves to the next milestone from the plan.
 
-In this alpha, start each scaffolded project with `asimov`; the unattended
-build loop and stop rules arrive in v3.0.0. Build mode needs
-`build.sandbox: true` in `~/.asimov/config.yaml`, set once, on purpose. It
-uses lighter defaults than interactive mode (effort `high`, no 1M thinking
-budget), configurable under `build:`.
+A build never runs open-ended. It stops, says why, and `asimov resume`
+continues, when any of these is hit:
+
+- `--max-loops` agent runs for one project (default 40)
+- `--max-hours` per build session (default 8)
+- `--max-usd` total spend (Claude only, also passed as `--max-budget-usd`)
+- `--stall` runs in a row with no new commit (default 3)
+- the agent writes `BLOCKED.md` saying what it needs
+
+Build mode needs `build.sandbox: true` in `~/.asimov/config.yaml`, set
+once, on purpose. It uses lighter defaults than interactive mode (effort
+`high`, no 1M thinking budget), configurable under `build:`. Projects are
+built one after another, because ref's saved Chrome profile can be used by
+one Chrome at a time.
 
 With ref's saved profile, an agent browses as you, signed in. In the
 sandbox, sign ref in only to the sites your specs need, never email,

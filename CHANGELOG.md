@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.0.0
+
+- Build mode is complete: after scaffolding, each project is built
+  unattended, milestone by milestone, one project after another
+- Execute loop: the agent runs headless with the protocols and a loop
+  prompt (tests from acceptance criteria first, commit through the gate,
+  mark released, write `BLOCKED.md` when stuck); Asimov promotes the next
+  milestone from `plan.yaml`
+- Stop rules: `--max-loops`, `--max-hours`, `--max-usd` (Claude, tracked
+  from each run's cost and passed as `--max-budget-usd`), `--stall`, and
+  `BLOCKED.md`; caps work on `build`, `approve` and `resume`
+- Release check: `ref check-links` on README and docs; broken links send
+  the milestone back with the report
+- `asimov resume` continues from any stop and can raise caps
+- Repos get a local commit identity when git has none
+- Tests: 144 (16 new for the execute loop and every stop rule)
+
 ## 3.0.0-alpha.1
 
 - New `asimov build <spec>...`: reads `.md`, `.txt`, `.pdf` (ref),
