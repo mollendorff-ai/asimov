@@ -767,14 +767,23 @@ load_build_agent() {
     return 0
 }
 
-# Run the agent headless in a folder: agent_run ai dir prompt logfile
+# Cost in USD of a headless Claude run, read from its JSON log (0 if absent)
+claude_log_cost() {
+    jq -r 'select(type == "object") | .total_cost_usd // 0' "$1" 2>/dev/null | tail -1 | grep . || echo 0
+}
+
+# Run the agent headless in a folder: agent_run ai dir prompt logfile [budget]
+# A Claude run writes JSON (so its cost can be counted) and honours the budget.
 agent_run() {
-    local ai="$1" dir="$2" prompt="$3" log="$4"
+    local ai="$1" dir="$2" prompt="$3" log="$4" budget="${5:-}"
     mkdir -p "$(dirname "$log")"
     (
         cd "$dir"
         case "$ai" in
-            claude) claude "${AGENT_ARGS[@]}" -p "$prompt" ;;
+            claude)
+                local extra=(--output-format json)
+                [ -n "$budget" ] && extra+=(--max-budget-usd "$budget")
+                claude "${AGENT_ARGS[@]}" "${extra[@]}" -p "$prompt" ;;
             gemini) gemini "${AGENT_ARGS[@]}" -p "$prompt" ;;
             codex)  codex exec "${AGENT_ARGS[@]}" --skip-git-repo-check "$prompt" ;;
         esac
@@ -838,7 +847,20 @@ build_plan() {
     rm -f "${BUILD_STATE}/plan.yaml" "${BUILD_STATE}/ASSUMPTIONS.md"
     echo "Planning with ${ai}..."
     load_build_agent "$ai"
-    if ! agent_run "$ai" "$BUILD_STATE" "$BUILD_PLAN_PROMPT" "$log"; then
+    # The planning run counts toward --max-usd like every other run
+    local max_usd spent budget="" cost failed=0
+    max_usd="$(cap max_usd "")"
+    spent="$(state_get spent_usd)"; spent="${spent:-0}"
+    if [ -n "$max_usd" ]; then
+        budget="$(awk -v m="$max_usd" -v s="$spent" 'BEGIN { r = m - s; printf "%.2f", (r > 0 ? r : 0) }')"
+        awk -v b="$budget" 'BEGIN { exit !(b <= 0) }' && build_fail "spent \$${spent} of \$${max_usd} (--max-usd); raise it with asimov resume --max-usd"
+    fi
+    agent_run "$ai" "$BUILD_STATE" "$BUILD_PLAN_PROMPT" "$log" "$budget" || failed=1
+    if [ "$ai" = "claude" ]; then
+        cost="$(claude_log_cost "$log")"
+        state_set spent_usd "$(awk -v s="$spent" -v c="$cost" 'BEGIN { printf "%.4f", s + c }')"
+    fi
+    if [ "$failed" -eq 1 ]; then
         build_fail "the planning run failed. Log: ${log}. Run asimov resume to retry."
     fi
     if ! problems="$(build_validate_plan)"; then
@@ -1020,7 +1042,7 @@ build_agent_turn() {
         esac
     ) > "$log" 2>&1 || true
     if [ "$ai" = "claude" ]; then
-        jq -r 'select(type == "object") | .total_cost_usd // 0' "$log" 2>/dev/null | tail -1 | grep . || echo 0
+        claude_log_cost "$log"
     else
         echo 0
     fi

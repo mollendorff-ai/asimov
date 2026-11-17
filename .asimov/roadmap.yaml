@@ -9,9 +9,9 @@ current:
     - "Collect what goes wrong in the first real build-mode runs and fix the top items"
     - "Run a real build with Gemini CLI and with Codex CLI (tested with mocks only so far), in a sandbox; --max-usd does not apply to them, so cap with --max-loops, --max-hours and --stall"
     # Found in the real Claude build of 2026-11-17 (wordfreq spec, 3 milestones,
-    # 3 runs, $2.19, about 6 minutes, every milestone released and verified):
-    - "--max-usd must cover the planning run too: agent_run runs claude without --output-format json or --max-budget-usd, so the plan's cost is neither counted in spent_usd nor capped, while the help says total spend"
-    - "Python gate: it checks python -c 'import pytest_cov' but then runs the pytest command, which can be a different interpreter without pytest-cov; run python -m pytest instead (the agent worked around it by reinstalling the global pytest tool)"
+    # 3 runs, $2.19, about 6 minutes, every milestone released and verified).
+    # Fixed since: the planning run now counts toward --max-usd and gets the
+    # remaining budget; the Python gate runs python -m pytest. Still open:
     - "The gate checks the working tree, not what is staged, so a commit can pass the hook while failing the gate on its own (the first wordfreq commit had pyproject.toml but no code or tests); check the staged snapshot, or document the limit"
     - "Cosmetic: the scaffold records type generic for a Python project, and its log ends with interactive-mode advice ('run asimov to start')"
 

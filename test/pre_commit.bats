@@ -156,6 +156,51 @@ _mock_python_tools() {
     mock_command "python" 0
 }
 
+@test "pre-commit runs the python coverage gate through python -m pytest" {
+    touch pyproject.toml
+    mock_command "ruff" 0
+    # python logs its arguments and succeeds; a bare pytest on PATH is not used
+    cat > "${TEST_TMPDIR}/mocks/python" << EOF
+#!/bin/bash
+echo "\$*" >> "${TEST_TMPDIR}/python.log"
+exit 0
+EOF
+    chmod +x "${TEST_TMPDIR}/mocks/python"
+    mock_command "pytest" 1
+    run "$HOOK"
+    [ "$status" -eq 0 ]
+    grep -q -- '-m pytest --cov=. --cov-fail-under=100' "${TEST_TMPDIR}/python.log"
+}
+
+@test "pre-commit fails when python has no pytest-cov even if a pytest command exists" {
+    touch pyproject.toml
+    mock_command "ruff" 0
+    mock_command "pytest" 0
+    cat > "${TEST_TMPDIR}/mocks/python" << 'EOF'
+#!/bin/bash
+case "$*" in *pytest_cov*) exit 1 ;; esac
+exit 0
+EOF
+    chmod +x "${TEST_TMPDIR}/mocks/python"
+    run "$HOOK"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"pytest-cov is not installed for python"* ]]
+}
+
+@test "pre-commit fails when python has no pytest" {
+    touch pyproject.toml
+    mock_command "ruff" 0
+    cat > "${TEST_TMPDIR}/mocks/python" << 'EOF'
+#!/bin/bash
+case "$*" in "-c import pytest") exit 1 ;; esac
+exit 0
+EOF
+    chmod +x "${TEST_TMPDIR}/mocks/python"
+    run "$HOOK"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"pytest is not installed for python"* ]]
+}
+
 @test "pre-commit uses --select ALL when project has no ruff config" {
     printf '[project]\nname = "x"\n' > pyproject.toml
     _mock_python_tools
