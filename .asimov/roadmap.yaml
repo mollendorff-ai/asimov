@@ -1,13 +1,15 @@
 # Asimov Roadmap
 # See CHANGELOG.md for release history.
+# Decided in the feature review of 2026-11-17. bin/asimov stays one script.
 
 current:
   version: "3.3.0"
-  title: "real builds and what they expose"
+  title: "upgrades reach existing projects"
   status: pending
   deliverables:
-    - "Run a real build with Gemini CLI and with Codex CLI (tested with mocks only so far), in a sandbox; --max-usd does not apply to them, so cap with --max-loops, --max-hours and --stall"
-    - "Collect what goes wrong in those runs and fix the top items"
+    - "asimov migrate refreshes protocol files: one that matches any version asimov has shipped is replaced with the current one; one the user edited is kept and reported with a diff"
+    - "A format version in .asimov/project.yaml, written by init and bumped by migrate, so migrate knows what it is upgrading from instead of guessing from which files exist"
+    - "Put the current sprint (from roadmap.yaml) in the system prompt and drop the separate warmup turn, which costs one extra model turn on every Claude launch"
 
 previous:
   version: "3.2.1"
@@ -15,14 +17,26 @@ previous:
 
 backlog:
   - version: "3.4.0"
-    title: "CI and supply-chain hardening"
+    title: "build mode hardening"
     status: pending
     deliverables:
+      - "Preflight: before the first paid run, check the tools the quality gate needs for each project's stack and stop with the install hint if one is missing"
       - "Build mode re-runs the quality gate itself before a milestone counts, since an agent can skip the pre-commit hook with git commit --no-verify (today it is only told not to); needs a mock-agent test"
+      - "Remove Gemini CLI and Codex CLI from build mode: never run for real, no spend cap, no subscriptions to test with. Interactive launch keeps them, labelled untested"
       - "Use one commit email in the build scaffold (history is already unified by .mailmap)"
-      - "Sign releases, or state in the README and SECURITY.md that SHA256SUMS only catch corruption, not tampering"
+      - "State in the README and SECURITY.md that SHA256SUMS only catch corruption, not tampering; signing waits until there is a key to manage"
   - version: "3.5.0"
-    title: "split bin/asimov"
+    title: "trim"
     status: pending
     deliverables:
-      - "Split bin/asimov (about 1,600 lines) into sourced modules before adding any new feature; the existing tests must pass unchanged"
+      - "Remove the pre-2.0 cleanup from asimov migrate (warmup.json, asimov.json, green.json, migrations.json, roles/, templates/, hooks/, protocols/), after confirming the owner's own projects are migrated"
+      - "Check the default launch settings (MAX_THINKING_TOKENS, CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, effort level) against current Claude Code and drop any that no longer do anything"
+
+# Held, not scheduled:
+# - asimov migrate --ai (the agent fills in description/stack/conventions,
+#   merges an edited protocol with a new one, sorts out unexpected files; on a
+#   clean git tree, reviewed as a diff). Build it only when a real semantic
+#   change to .asimov/ arrives; the Rust version's migration assistant was
+#   part of its scope creep.
+# - asimov config: the first command to drop if the tool should get smaller.
+# - Real Gemini CLI and Codex CLI runs: no subscriptions.
