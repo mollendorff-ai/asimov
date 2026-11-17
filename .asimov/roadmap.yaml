@@ -3,16 +3,16 @@
 # Decided in the feature review of 2026-11-17. bin/asimov stays one script.
 
 current:
-  version: "3.5.0"
-  title: "trim"
+  version: "3.5.1"
+  title: "migrate says only what it changed"
   status: released
   deliverables:
-    - "Remove the pre-2.0 cleanup from asimov migrate (warmup.json, asimov.json, green.json, migrations.json, roles/, templates/, hooks/, protocols/), after confirming the owner's own projects are migrated"
-    - "Check the default launch settings (MAX_THINKING_TOKENS, CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, effort level) against current Claude Code and drop any that no longer do anything"
+    - "migrate updates the pre-commit hook, and says so, only when it differs from the shipped one; no 'Updated pre-commit hook' or 'Migration complete' on a run that changed nothing"
+    - "migrate does not call a protocol file edited when it differs from the shipped one only in whitespace"
 
 previous:
-  version: "3.4.0"
-  title: "build mode hardening"
+  version: "3.5.0"
+  title: "trim"
 
 backlog: []
 

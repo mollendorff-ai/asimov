@@ -297,6 +297,77 @@ _project_with_current_protocols() {
     [[ "$output" != *"Refreshed"* ]]
 }
 
+# ─── Quiet when nothing changed ─────────────────────────────────────────
+
+# The tests above run in a folder with no .git, so they never reach the
+# pre-commit hook step. These run in a real repo.
+_current_project_in_git_repo() {
+    _project_with_current_protocols
+    yq -i '.format = 1' .asimov/project.yaml
+    git init -q .
+    mkdir -p .git/hooks
+    cp "${PROJECT_ROOT}/hooks/pre-commit" .git/hooks/pre-commit
+    chmod +x .git/hooks/pre-commit
+}
+
+@test "migrate in a git repo with a current hook says it is up to date" {
+    _current_project_in_git_repo
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Already up to date."* ]]
+    [[ "$output" != *"pre-commit hook"* ]]
+    [[ "$output" != *"Migration complete"* ]]
+}
+
+@test "migrate updates an out-of-date hook once, then stays quiet" {
+    _current_project_in_git_repo
+    echo '# old hook' > .git/hooks/pre-commit
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" == *"Updated pre-commit hook"* ]]
+    [[ "$output" == *"Migration complete"* ]]
+    cmp -s .git/hooks/pre-commit "${PROJECT_ROOT}/hooks/pre-commit"
+    [ -x .git/hooks/pre-commit ]
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" == *"Already up to date."* ]]
+}
+
+@test "migrate installs a missing hook" {
+    _current_project_in_git_repo
+    rm .git/hooks/pre-commit
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" == *"Installed pre-commit hook"* ]]
+    [ -x .git/hooks/pre-commit ]
+}
+
+@test "migrate treats a protocol that differs only by whitespace as current" {
+    _current_project_in_git_repo
+    # no final newline, as .asimov/sycophancy.json once was
+    printf '%s' "$(cat "${PROJECT_ROOT}/protocols/sycophancy.json")" > .asimov/sycophancy.json
+    ! cmp -s .asimov/sycophancy.json "${PROJECT_ROOT}/protocols/sycophancy.json"
+    before="$(cat .asimov/sycophancy.json)"
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Already up to date."* ]]
+    [[ "$output" != *"Kept"* ]]
+    [ "$(cat .asimov/sycophancy.json)" = "$before" ]
+}
+
+@test "migrate treats a protocol with different indentation as current" {
+    _current_project_in_git_repo
+    jq -c . "${PROJECT_ROOT}/protocols/sprint.json" > .asimov/sprint.json
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" == *"Already up to date."* ]]
+    [[ "$output" != *"Kept"* ]]
+}
+
+@test "migrate still flags a protocol whose content differs" {
+    _current_project_in_git_repo
+    jq '.rule = "changed"' "${PROJECT_ROOT}/protocols/freshness.json" > .asimov/freshness.json
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" == *"Kept .asimov/freshness.json"* ]]
+    [[ "$output" == *"looks edited"* ]]
+}
+
 # ─── Format version ─────────────────────────────────────────────────────
 
 _project_without_format() {
