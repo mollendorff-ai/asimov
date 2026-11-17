@@ -1,7 +1,7 @@
 # Maps the author identities in history to one canonical identity.
 # History itself is not rewritten; git log, shortlog and blame use this file.
-# Left unmapped on purpose: RoyalBit Rex <rex@royalbit.ca> (confirm before
-# mapping) and Claude <noreply@anthropic.com>.
+# Left unmapped on purpose: Claude <noreply@anthropic.com>.
 lctavares <lctavares@users.noreply.github.com> Louis C. Tavares <lc.tavares@icloud.com>
 lctavares <lctavares@users.noreply.github.com> Louis C. Tavares <lc@royalbit.ca>
 lctavares <lctavares@users.noreply.github.com> Luis Cezar Tavares <lc.tavares@icloud.com>
+lctavares <lctavares@users.noreply.github.com> RoyalBit Rex <rex@royalbit.ca>
