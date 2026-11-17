@@ -22,10 +22,12 @@ Two modes:
 > assistance.
 
 Status: personal, no stability promises. Its author uses interactive mode
-in a sandbox. Build mode is new in v3.0.0 and runs Claude only: it is
-tested with mock agents and with small real builds with Claude. Gemini CLI
-and Codex CLI are for interactive use; their build runs were never tested
-for real and could not be capped on spend, so they were removed.
+with Claude Code in a sandbox. Build mode, since v3.0.0, runs Claude only:
+it is tested with mock agents and with small real builds with Claude.
+Gemini CLI and Codex CLI are for interactive use only, and their launch is
+tested with mock CLIs only: the author has no subscriptions and has not run
+them for real. Their build runs were never tested and could not be capped
+on spend, so build mode no longer offers them.
 
 ## The idea
 
@@ -130,7 +132,9 @@ asimov config get  # show the config; set and unset change it
 
 Claude Code is the primary target. Gemini CLI and Codex CLI have no flag to
 append to the system prompt, so their protocols arrive as the first message
-and can be lost when a long session is compacted.
+and can be lost when a long session is compacted. Their launch is tested
+with mock CLIs only, so a flag renamed in a new release would break it
+without any test noticing.
 
 ## Build mode
 
@@ -144,9 +148,10 @@ asimov resume                 # continue after any stop
 asimov build --yes --max-usd 20 spec.md   # no approval stop
 ```
 
-Always set `--max-usd` with Claude: a small spec cost $0.84 in testing,
-but a real project can cost far more. `asimov status` in the build folder
-shows the phase, the spend against the cap and the milestones released.
+Always set `--max-usd` with Claude: small three-milestone test specs cost
+$0.84 to $2.19, and a real project can cost far more. `asimov status` in
+the build folder shows the phase, the spend against the cap and the
+milestones released.
 
 1. **Read specs** -- `.md` and `.txt` as they are, `.pdf` and URLs through
    [ref][ref], `.docx` through pandoc, all saved as Markdown in
@@ -226,7 +231,8 @@ launch:
 Change any setting with `asimov config set <key> <value>` (keys use dots,
 values are YAML, so `true`, `3` and `[--a, --b]` keep their type); add
 `--project` to write `.asimov/launch.yaml` instead. `asimov config get`
-prints the file or one value; `asimov config unset` removes a key.
+prints the file or one value; `asimov config unset` removes a key;
+`asimov config path` prints where the config file is.
 
 Per-project overrides go in `.asimov/launch.yaml`, same format. For each
 setting (`model`, `args`, `env`), a project value replaces the global one
@@ -284,6 +290,9 @@ fails. Run outside a git repository, the hook checks the current folder.
 | Node | `prettier` | `eslint --max-warnings=0` | `npm test` |
 | Go | `gofumpt` | `golangci-lint` | `go-test-coverage` 100% |
 | Flutter | `dart format` | `dart analyze` | `flutter test` 100% |
+
+When `markdownlint-cli2` is installed, the hook also lints every Markdown
+file in the project, and a lint error fails the commit.
 
 The hook carries a notice telling AI agents not to bypass it. If checks
 fail, the agent has to fix the code. In interactive mode that notice is all
