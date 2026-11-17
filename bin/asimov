@@ -3,7 +3,7 @@
 # Personal tool, built for sandboxed environments. Claude Code, Gemini CLI, Codex CLI.
 set -euo pipefail
 
-ASIMOV_VERSION="3.4.0"
+ASIMOV_VERSION="3.5.0"
 ASIMOV_REPO="mollendorff-ai/asimov"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
@@ -95,7 +95,6 @@ launch:
     args:
       - --dangerously-skip-permissions
     env:
-      MAX_THINKING_TOKENS: "1000000"
       CLAUDE_CODE_EFFORT_LEVEL: "max"
       CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
 
@@ -261,7 +260,7 @@ launch_ai() {
         case "$ai" in claude) model="opus" ;; esac
     fi
     if [ -z "$env_list" ]; then
-        case "$ai" in claude) env_list="MAX_THINKING_TOKENS=1000000" ;; esac
+        case "$ai" in claude) env_list="CLAUDE_CODE_EFFORT_LEVEL=max" ;; esac
     fi
 
     # Set env vars (line is KEY=VALUE, not a variable name)
@@ -517,24 +516,6 @@ cmd_migrate() {
         echo "Run 'asimov update' first. Nothing was changed." >&2
         exit 1
     fi
-
-    # Remove old cruft files
-    for f in warmup.json asimov.json green.json migrations.json; do
-        if [ -f ".asimov/${f}" ]; then
-            rm ".asimov/${f}"
-            echo "Removed .asimov/${f}"
-            changed=1
-        fi
-    done
-
-    # Remove old cruft directories
-    for d in roles templates hooks protocols; do
-        if [ -d ".asimov/${d}" ]; then
-            rm -rf ".asimov/${d}"
-            echo "Removed .asimov/${d}/"
-            changed=1
-        fi
-    done
 
     # Old asimov versions generated bootstrap files in the project root.
     # Never delete them: they may hold your own instructions now.

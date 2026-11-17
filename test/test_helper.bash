@@ -47,7 +47,7 @@ launch:
     args:
       - --dangerously-skip-permissions
     env:
-      MAX_THINKING_TOKENS: "1000000"
+      CLAUDE_CODE_EFFORT_LEVEL: "max"
 
   gemini:
     args:

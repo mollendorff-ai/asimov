@@ -15,3 +15,5 @@ conventions:
   - "Single script (bin/asimov), no compiled dependencies"
   - "Protocols are self-contained JSON with a rule field"
   - "Pre-commit enforces format + lint + 100% coverage"
+
+format: 1

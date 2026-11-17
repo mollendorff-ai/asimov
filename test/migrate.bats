@@ -19,10 +19,12 @@ teardown() {
     [[ "$output" == *"No .asimov/ directory found"* ]]
 }
 
-# ─── Cruft removal ──────────────────────────────────────────────────────
+# ─── Pre-2.0 leftovers ──────────────────────────────────────────────────
 
-@test "migrate removes old cruft files" {
-    mkdir -p .asimov
+# Migrate used to delete the files and folders asimov 1.x left in .asimov/.
+# It no longer does; they show up as unexpected files for the owner to remove.
+@test "migrate no longer deletes pre-2.0 files and folders, and flags them" {
+    mkdir -p .asimov/roles .asimov/templates .asimov/hooks .asimov/protocols
     touch .asimov/project.yaml
     for f in warmup.json asimov.json green.json migrations.json; do
         echo '{}' > ".asimov/${f}"
@@ -30,22 +32,16 @@ teardown() {
 
     run "$ASIMOV_BIN" migrate
     [ "$status" -eq 0 ]
-    [ ! -f .asimov/warmup.json ]
-    [ ! -f .asimov/asimov.json ]
-    [ ! -f .asimov/green.json ]
-    [ ! -f .asimov/migrations.json ]
-}
-
-@test "migrate removes old cruft directories" {
-    mkdir -p .asimov/roles .asimov/templates .asimov/hooks .asimov/protocols
-    touch .asimov/project.yaml
-
-    run "$ASIMOV_BIN" migrate
-    [ "$status" -eq 0 ]
-    [ ! -d .asimov/roles ]
-    [ ! -d .asimov/templates ]
-    [ ! -d .asimov/hooks ]
-    [ ! -d .asimov/protocols ]
+    [[ "$output" != *"Removed .asimov/"* ]]
+    [[ "$output" == *"Unexpected files"* ]]
+    for f in warmup.json asimov.json green.json migrations.json; do
+        [ -f ".asimov/${f}" ]
+        [[ "$output" == *".asimov/${f}"* ]]
+    done
+    for d in roles templates hooks protocols; do
+        [ -d ".asimov/${d}" ]
+        [[ "$output" == *".asimov/${d}"* ]]
+    done
 }
 
 @test "migrate keeps CLAUDE.md, GEMINI.md and CODEX.md and says so" {

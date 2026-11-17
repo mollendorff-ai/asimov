@@ -188,7 +188,7 @@ commit. If one is missing, Asimov names it with the install command, and
 
 Build mode needs `build.sandbox: true` in `~/.asimov/config.yaml`, set
 once, on purpose. It uses lighter defaults than interactive mode (effort
-`high`, no 1M thinking budget), configurable under `build:`. Projects are
+`high`), configurable under `build:`. Projects are
 built one after another, because ref's saved Chrome profile can be used by
 one Chrome at a time.
 
@@ -211,7 +211,6 @@ launch:
     args:
       - --dangerously-skip-permissions
     env:
-      MAX_THINKING_TOKENS: "1000000"
       CLAUDE_CODE_EFFORT_LEVEL: "max"
       CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
 
@@ -239,9 +238,10 @@ Everything is set for maximum autonomy and maximum reasoning, because that
 is the point of the tool:
 
 - `--dangerously-skip-permissions` -- no tool-approval prompts ([docs][cc-perms])
-- `MAX_THINKING_TOKENS` -- large extended-thinking budget ([docs][cc-think])
 - `CLAUDE_CODE_EFFORT_LEVEL: max` -- deepest reasoning ([docs][cc-settings])
-- `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 1` -- multi-agent coordination ([docs][cc-teams])
+- `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 1` -- multi-agent coordination;
+  experimental, interactive sessions only, and it uses many more tokens
+  ([docs][cc-teams])
 - `--approval-mode=yolo` -- Gemini CLI auto-approves all actions ([docs][gem-cli])
 - `--full-auto` -- Codex CLI autonomous mode ([docs][codex-cli])
 
@@ -311,8 +311,7 @@ Not related to Reflection AI's Asimov or other projects with the same name.
 
 [ref]: https://github.com/mollendorff-ai/ref
 [cc-perms]: https://code.claude.com/docs/en/permissions
-[cc-think]: https://code.claude.com/docs/en/settings
-[cc-settings]: https://code.claude.com/docs/en/settings
+[cc-settings]: https://code.claude.com/docs/en/model-config
 [cc-teams]: https://code.claude.com/docs/en/agent-teams
 [gem-cli]: https://geminicli.com/docs/cli/cli-reference/
 [codex-cli]: https://developers.openai.com/codex/cli/reference/
