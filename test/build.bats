@@ -66,6 +66,9 @@ _mock_gate_tools() {
         printf '#!/usr/bin/env bash\nexit 0\n' > "${MOCK_DIR}/${t}"
         chmod +x "${MOCK_DIR}/${t}"
     done
+    # ruff fails on code the agent left unformatted: a bad.py where it runs
+    # (the gate runs it in its copy of the staged or committed files)
+    printf '#!/usr/bin/env bash\n[ -e bad.py ] && { echo "Would reformat: bad.py"; exit 1; }\nexit 0\n' > "${MOCK_DIR}/ruff"
 }
 
 # Agent mock: records args and env; in .asimov-build writes the plan
@@ -85,9 +88,22 @@ if [ "$(basename "$PWD")" = ".asimov-build" ]; then
 fi
 # In a project: act like an agent working on the current milestone
 _commit() { echo "$RANDOM" >> work.txt; git add -A >/dev/null; git commit -q --no-verify -m "work" >/dev/null; }
+# Code that fails the quality gate, committed past the hook with --no-verify
+_commit_bad() { touch pyproject.toml; echo "x=1" > bad.py; _commit; }
+_release() { yq -i '.current.status = "released"' .asimov/roadmap.yaml; }
+_move() { yq -i '.previous = {"version": .current.version, "title": .current.title} | .current = .backlog[0] | .backlog = .backlog[1:]' .asimov/roadmap.yaml; }
 case "${MOCK_LOOP:-release}" in
-    release) _commit; yq -i '.current.status = "released"' .asimov/roadmap.yaml ;;
-    move)    _commit; yq -i '.previous = {"version": .current.version, "title": .current.title} | .current = .backlog[0] | .backlog = .backlog[1:]' .asimov/roadmap.yaml ;;
+    release) _commit; _release ;;
+    move)    _commit; _move ;;
+    bad)     _commit_bad; _release ;;
+    bad_move) _commit_bad; _move ;;
+    # fixed in the working tree only, never committed
+    bad_dirty_fix) _commit_bad; rm bad.py; _release ;;
+    # good code committed, junk left uncommitted
+    good_dirty) rm -f bad.py; touch pyproject.toml; _commit; echo "x=1" > bad.py; _release ;;
+    # bad code, and the project's own hook emptied so it would pass anything
+    bad_hook) _commit_bad; printf '#!/bin/sh\nexit 0\n' > .git/hooks/pre-commit; _release ;;
+    fix)     git rm -q --ignore-unmatch bad.py; _commit; _release ;;
     commit)  _commit ;;
     block)   echo "Need an API key for the payments sandbox." > BLOCKED.md ;;
     idle)    ;;
@@ -781,6 +797,96 @@ EOF
     run "$ASIMOV_BIN" resume --max-loops 10
     [ "$status" -eq 0 ]
     grep -q 'these links in README.md or docs/ are broken' "$ARGS_LOG"
+}
+
+# Quality gate re-run: an agent can commit with --no-verify (the mock always
+# does), so Asimov runs the gate itself on HEAD before a milestone counts.
+
+@test "gate: code committed past the hook sends the milestone back" {
+    export MOCK_LOOP=bad
+    run "$ASIMOV_BIN" build --yes --max-loops 1 spec.md
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"fails the quality gate, sending back"* ]]
+    [[ "$output" != *"released"* ]]
+    [ "$(yq -r .current.version todo-api/.asimov/roadmap.yaml)" = "0.1.0" ]
+    [ "$(yq -r .current.status todo-api/.asimov/roadmap.yaml)" = "autonomous" ]
+    [ "$(yq -r '.projects["todo-api"].milestone // 0' .asimov-build/state.yaml)" = "0" ]
+    grep -q 'Would reformat: bad.py' .asimov-build/logs/gate-todo-api.log
+}
+
+@test "gate: the next run gets the gate output, and a fix releases" {
+    export MOCK_LOOP=bad
+    run "$ASIMOV_BIN" build --yes --max-loops 1 spec.md
+    [ "$status" -eq 2 ]
+    export MOCK_LOOP=fix
+    run "$ASIMOV_BIN" resume --max-loops 10
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Build done"* ]]
+    grep -q 'fails the quality gate, so a commit skipped' "$ARGS_LOG"
+    grep -q 'Never use git commit --no-verify' "$ARGS_LOG"
+    grep -q 'Would reformat: bad.py' "$ARGS_LOG"
+    [ "$(yq -r '.projects["todo-api"].gate_fails' .asimov-build/state.yaml)" = "0" ]
+}
+
+@test "gate: a fix left uncommitted does not count" {
+    export MOCK_LOOP=bad_dirty_fix
+    run "$ASIMOV_BIN" build --yes --max-loops 1 spec.md
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"fails the quality gate, sending back"* ]]
+}
+
+@test "gate: uncommitted junk does not block good committed code" {
+    export MOCK_LOOP=good_dirty
+    run "$ASIMOV_BIN" build --yes spec.md
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Build done"* ]]
+    [ -e todo-api/bad.py ]
+}
+
+@test "gate: runs Asimov's hook, so emptying the project's hook does not help" {
+    export MOCK_LOOP=bad_hook
+    run "$ASIMOV_BIN" build --yes --max-loops 1 spec.md
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"fails the quality gate, sending back"* ]]
+}
+
+@test "gate: an agent that moved the milestone itself is moved back" {
+    export MOCK_LOOP=bad_move
+    run "$ASIMOV_BIN" build --yes --max-loops 1 spec.md
+    [ "$status" -eq 2 ]
+    [ "$(yq -r .current.version todo-api/.asimov/roadmap.yaml)" = "0.1.0" ]
+    [ "$(yq -r .current.status todo-api/.asimov/roadmap.yaml)" = "autonomous" ]
+}
+
+@test "gate: failures in a row stop the build, and resume continues" {
+    export MOCK_LOOP=bad
+    run "$ASIMOV_BIN" build --yes --stall 2 spec.md
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"failed the quality gate 2 times in a row"* ]]
+    [[ "$output" == *"gate-todo-api.log"* ]]
+    [ "$(grep -c '^---call claude in todo-api' "$ARGS_LOG")" -eq 2 ]
+    export MOCK_LOOP=fix
+    run "$ASIMOV_BIN" resume
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Build done"* ]]
+}
+
+@test "gate: does not run when no release is claimed" {
+    export MOCK_LOOP=commit
+    run "$ASIMOV_BIN" build --yes --max-loops 1 spec.md
+    [ "$status" -eq 2 ]
+    [ ! -e .asimov-build/logs/gate-todo-api.log ]
+}
+
+@test "gate: a missing shipped hook stops the build instead of skipping it" {
+    local data="${TEST_TMPDIR}/data"
+    mkdir -p "$data"
+    cp -R "${PROJECT_ROOT}/protocols" "$data/"
+    export MOCK_LOOP=release
+    ASIMOV_DATA="$data" run "$ASIMOV_BIN" build --yes spec.md
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the quality gate is missing"* ]]
+    [[ "$output" != *"Build done"* ]]
 }
 
 @test "scaffold gives repos a commit identity when git has none" {

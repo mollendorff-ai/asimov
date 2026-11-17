@@ -164,11 +164,27 @@ Headless command: `claude -p <prompt>` plus launch args,
 from it) and `--max-budget-usd` when a cap is set. The planning run uses
 the same flags, so its cost counts toward `--max-usd` too.
 
-### 7. Release check (optional)
+### 7. Release checks
 
-Before accepting a milestone as released, run `ref check-links` on the
-project's README and `docs/`. Dead links send the milestone back to the
-agent with the report. On by default when `ref` is installed.
+Before accepting a milestone as released:
+
+1. **Quality gate on HEAD (always).** The agent runs with no approval
+   prompts, so it can commit with `git commit --no-verify` or weaken the
+   project's `.git/hooks/pre-commit`. Asimov runs its own shipped hook, not
+   the project's, against a temporary index read from HEAD
+   (`GIT_INDEX_FILE=<tmp> git read-tree HEAD`). The hook copies the index
+   to a temporary folder and checks it there, so this checks exactly what
+   was committed: an uncommitted fix does not count, uncommitted junk does
+   not block. Output goes to `logs/gate-<project>.log`. A failure sends the
+   milestone back: the roadmap is rewritten from the plan (status
+   `autonomous`, which also undoes an agent that moved the milestone
+   itself), and the next run's prompt carries the end of the gate output.
+   A missing shipped hook stops the build rather than skipping the check.
+2. **Links (when `ref` is installed).** `ref check-links` on the project's
+   README and `docs/`. Dead links send the milestone back the same way,
+   with the report.
+
+The gate runs only when a run claims a release, not after every run.
 
 ## Stop rules
 
@@ -179,6 +195,8 @@ prints the reason when any of these fires:
 - Time cap: `--max-hours` since the build started (default 8).
 - Spend cap: `--max-usd` reached (Claude).
 - Stall: `--stall` runs in a row with no new commit in the project.
+- Gate failures: `--stall` releases in a row whose committed code fails the
+  quality gate (the counter resets when the gate passes).
 - The agent writes `BLOCKED.md` in the project (the loop prompt tells it to
   do so when it cannot continue, with the reason).
 
@@ -253,8 +271,8 @@ record arguments and write scripted outputs.
   edits to the roadmap; an agent that moves the milestone itself is
   treated as having released it.
 - The time cap counts per build session, so `resume` gets a fresh window.
-- `resume` after a stop resets the stall counters; loop counts and spend
-  carry over.
+- `resume` after a stop resets the stall and gate-failure counters; loop
+  counts and spend carry over.
 - Repos get a local commit identity (`Asimov Build`) when git has none.
 - The plan run gets no protocols; its prompt carries the full instructions.
 - The scaffold makes no commit; the agent's first commit goes through the

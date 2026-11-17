@@ -1175,6 +1175,25 @@ build_link_check() {
     return "$ok"
 }
 
+# Asimov runs the quality gate itself on what HEAD holds before a milestone
+# counts: an agent can commit with --no-verify or weaken the project's own
+# hook, so this runs the shipped hook, not .git/hooks/pre-commit. The hook
+# checks the index, so a temporary index read from HEAD makes it check exactly
+# what was committed. Returns 1 when the gate fails, with its output in $2.
+build_gate_check() {
+    local dir="$1" log="$2" hook="${DATA_DIR}/hooks/pre-commit" tmp rc=0
+    [ -f "$hook" ] || build_fail "the quality gate is missing: ${hook} (reinstall Asimov)"
+    mkdir -p "$(dirname "$log")"
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/asimov-index.XXXXXX")"
+    (
+        cd "$dir"
+        export GIT_INDEX_FILE="${tmp}/index"
+        git read-tree HEAD && bash "$hook"
+    ) > "$log" 2>&1 || rc=1
+    rm -rf "$tmp"
+    return "$rc"
+}
+
 build_stop() {
     state_set phase "stopped"
     state_set stop_reason "$1"
@@ -1202,7 +1221,7 @@ build_execute() {
         dir="${BUILD_DIR}/${name}"
         [ "$(pstate_get "$name" finished)" = "true" ] && continue
         ensure_git_identity "$dir"
-        local idx milestones loops stall
+        local idx milestones loops stall gate_fails gate_log
         idx="$(pstate_get "$name" milestone)"; idx="${idx:-0}"
         milestones="$(yq ".projects[$p].milestones | length" "$plan")"
         echo ""
@@ -1214,6 +1233,9 @@ build_execute() {
             stall="$(pstate_get "$name" stall)"; stall="${stall:-0}"
             [ "$loops" -ge "$max_loops" ] && build_stop "${name}: reached ${max_loops} agent runs (--max-loops)"
             [ "$stall" -ge "$stall_cap" ] && build_stop "${name}: ${stall} runs in a row without a new commit (--stall)"
+            gate_fails="$(pstate_get "$name" gate_fails)"; gate_fails="${gate_fails:-0}"
+            gate_log="${BUILD_STATE}/logs/gate-${name}.log"
+            [ "$gate_fails" -ge "$stall_cap" ] && build_stop "${name}: the committed code failed the quality gate ${gate_fails} times in a row (--stall), see ${gate_log}"
             [ "$(date +%s)" -ge "$deadline" ] && build_stop "reached ${max_hours} hours (--max-hours)"
             local spent budget=""
             spent="$(state_get spent_usd)"; spent="${spent:-0}"
@@ -1225,6 +1247,12 @@ build_execute() {
             local version before after cost prompt="$BUILD_LOOP_PROMPT" report
             version="$(yq -r '.current.version' "${dir}/.asimov/roadmap.yaml")"
             report="${BUILD_STATE}/logs/links-${name}.json"
+            if [ "$(pstate_get "$name" gate_failed)" = "true" ]; then
+                prompt="${prompt}
+
+The milestone was marked released, but the committed code (HEAD) fails the quality gate, so a commit skipped or weakened the pre-commit hook. Never use git commit --no-verify and never change .git/hooks/pre-commit. Fix the code, commit it through the gate, then mark the milestone released again. The end of the gate output:
+$(tail -c 4000 "$gate_log")"
+            fi
             if [ "$(pstate_get "$name" links_failed)" = "true" ]; then
                 prompt="${prompt}
 
@@ -1252,10 +1280,21 @@ $(head -c 4000 "$report")"
             if [ "$status" != "released" ] && ! { [ "$prev" = "$version" ] && [ "$(yq -r '.current.version // ""' "${dir}/.asimov/roadmap.yaml")" != "$version" ]; }; then
                 continue
             fi
+            # Sent back: the roadmap is rewritten from the plan, which also
+            # undoes an agent that moved the milestone to previous itself
+            if ! build_gate_check "$dir" "$gate_log"; then
+                echo "  ${name} ${version}: the committed code fails the quality gate, sending back"
+                pstate_set "$name" gate_failed true
+                pstate_set "$name" gate_fails $((gate_fails + 1))
+                write_roadmap "$p" "$idx" "$dir"
+                continue
+            fi
+            pstate_set "$name" gate_failed false
+            pstate_set "$name" gate_fails 0
             if ! build_link_check "$dir" "$report"; then
                 echo "  ${name} ${version}: broken links, sending back"
                 pstate_set "$name" links_failed true
-                yq -i '.current.status = "autonomous"' "${dir}/.asimov/roadmap.yaml"
+                write_roadmap "$p" "$idx" "$dir"
                 continue
             fi
             pstate_set "$name" links_failed false
@@ -1452,11 +1491,11 @@ cmd_resume() {
     [ -f "$(state_file)" ] || build_fail "no build in ${BUILD_DIR} (no .asimov-build/state.yaml)"
     build_require_claude "$(state_get ai)"
     save_caps
-    # A stall or block was the reason to stop: start counting afresh
+    # A stall, gate failures or a block was the reason to stop: count afresh
     if [ "$(state_get phase)" = "stopped" ]; then
         local n
         while IFS= read -r n; do
-            [ -n "$n" ] && pstate_set "$n" stall 0
+            [ -n "$n" ] && pstate_set "$n" stall 0 && pstate_set "$n" gate_fails 0
         done < <(yq -r '.projects // {} | keys | .[]' "$(state_file)")
     fi
     local ai
@@ -1495,11 +1534,13 @@ Caps (build, approve and resume; a build never runs open-ended):
     --max-loops <n> agent runs per project (default 40)
     --max-hours <h> hours per build session (default 8)
     --max-usd <x>   total spend, planning included (default: none)
-    --stall <n>     stop after n runs with no new commit (default 3)
+    --stall <n>     stop after n runs with no new commit, or n failed
+                    quality gates in a row (default 3)
 
 Before the first paid run, the quality gate's tools are checked for each
 project's stack; asimov resume continues once any that are missing are
-installed.
+installed. A milestone counts only when the committed code passes the
+quality gate, run by Asimov itself (a commit can skip the hook).
 
 Needs build.sandbox: true in ~/.asimov/config.yaml (sandbox only).
 Design: docs/design/build-mode.md

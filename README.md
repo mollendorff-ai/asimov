@@ -40,8 +40,9 @@ Autonomy without guardrails produces fast garbage. Asimov pairs the two:
   agent's prompt, so it starts on the current sprint before you type
   anything, without spending a turn reading the file.
 - **Quality gate** -- a pre-commit hook that blocks any commit that is not
-  formatted, lint-clean and 100% covered. The agent cannot ship unchecked
-  code; it has to fix it.
+  formatted, lint-clean and 100% covered, so the agent has to fix the code.
+  A hook can be skipped (`git commit --no-verify`), so build mode also runs
+  the gate itself on the committed code before a milestone counts.
 - **Stop rules** -- in build mode, caps on runs, hours, spend and stalls,
   so an unattended build always ends and says why.
 
@@ -161,8 +162,11 @@ shows the phase, the spend against the cap and the milestones released.
 5. **Build** -- for each project in turn, the agent runs headless on the
    current milestone: tests from the acceptance criteria first, commits
    through the quality gate, and marks the milestone released when done.
-   Asimov then checks README and docs links with `ref check-links` (broken
-   links send it back) and moves to the next milestone from the plan.
+   Asimov then runs the quality gate itself on what HEAD holds, since an
+   agent can commit past the hook, and checks README and docs links with
+   `ref check-links`. Either failure sends the milestone back to the agent
+   with the output; otherwise Asimov moves to the next milestone from the
+   plan.
 
 A build never runs open-ended. It stops, says why, and `asimov resume`
 continues, when any of these is hit:
@@ -171,7 +175,8 @@ continues, when any of these is hit:
 - `--max-hours` per build session (default 8)
 - `--max-usd` total spend, planning run included (also passed to each run
   as `--max-budget-usd`)
-- `--stall` runs in a row with no new commit (default 3)
+- `--stall` runs in a row with no new commit, or that many quality gate
+  failures in a row on the committed code (default 3)
 - the agent writes `BLOCKED.md` saying what it needs
 
 After you approve the plan and before the first build run, Asimov checks
@@ -281,7 +286,9 @@ fails. Run outside a git repository, the hook checks the current folder.
 | Flutter | `dart format` | `dart analyze` | `flutter test` 100% |
 
 The hook carries a notice telling AI agents not to bypass it. If checks
-fail, the agent has to fix the code. The hook lives in `.git/hooks/`, so
+fail, the agent has to fix the code. In interactive mode that notice is all
+that stops an agent from committing with `--no-verify`; build mode re-runs
+the gate itself before a milestone counts. The hook lives in `.git/hooks/`, so
 run `asimov init` or `asimov migrate` in each clone, and `asimov migrate`
 after `asimov update` to refresh it.
 
