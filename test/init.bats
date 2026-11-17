@@ -132,6 +132,34 @@ teardown() {
     [ "$output" = "generic" ]
 }
 
+@test "init prints the next-step hint for people" {
+    git init -q .
+    run "$ASIMOV_BIN" init
+    [[ "$output" == *"Next: edit .asimov/project.yaml"* ]]
+}
+
+@test "init leaves out the next-step hint when build mode runs it" {
+    git init -q .
+    ASIMOV_INIT_BUILD=1 run "$ASIMOV_BIN" init
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Next:"* ]]
+}
+
+@test "init takes the type from ASIMOV_INIT_TYPE when no marker file decides" {
+    git init -q .
+    ASIMOV_INIT_TYPE=python run "$ASIMOV_BIN" init
+    run yq -r '.identity.type' .asimov/project.yaml
+    [ "$output" = "python" ]
+}
+
+@test "init prefers a marker file over ASIMOV_INIT_TYPE" {
+    git init -q .
+    touch Cargo.toml
+    ASIMOV_INIT_TYPE=python run "$ASIMOV_BIN" init
+    run yq -r '.identity.type' .asimov/project.yaml
+    [ "$output" = "rust" ]
+}
+
 # ─── Pre-commit hook ────────────────────────────────────────────────────
 
 @test "init installs pre-commit hook in git repo" {

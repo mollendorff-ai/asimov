@@ -10,6 +10,11 @@
   are linked in; Rust builds reuse `target/`. A check that needs a
   git-ignored file must have it staged. Projects get the new hook with
   `asimov migrate`.
+- Build mode scaffold: the project type in `.asimov/project.yaml` comes
+  from the plan's stack (rust, python, node, go or flutter, first match,
+  any case) instead of always being `generic`, and the scaffold log no
+  longer ends with the interactive-mode "run asimov to start" advice.
+  `asimov init` by hand is unchanged.
 
 ## 3.1.1
 

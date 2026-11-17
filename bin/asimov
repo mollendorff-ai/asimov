@@ -336,6 +336,8 @@ cmd_init() {
     elif [ -f go.mod ]; then ptype="go"
     elif [ -f pubspec.yaml ]; then ptype="flutter"
     fi
+    # Build mode scaffolds an empty folder, so it passes the type from the plan
+    [ "$ptype" = "generic" ] && [ -n "${ASIMOV_INIT_TYPE:-}" ] && ptype="$ASIMOV_INIT_TYPE"
 
     # Create .asimov/ with 4 protocols
     mkdir -p .asimov
@@ -393,8 +395,27 @@ YAML
     echo "  .asimov/sycophancy.json"
     echo "  .asimov/sprint.json"
     echo "  .asimov/coding-standards.json"
-    echo ""
-    echo "Next: edit .asimov/project.yaml, then run 'asimov' to start"
+    # Build mode fills project.yaml in itself; the hint is for people
+    if [ -z "${ASIMOV_INIT_BUILD:-}" ]; then
+        echo ""
+        echo "Next: edit .asimov/project.yaml, then run 'asimov' to start"
+    fi
+}
+
+# Project type for .asimov/project.yaml from a plan's stack list (stdin, one
+# entry per line): the first entry that names a language asimov knows
+stack_to_type() {
+    local entry
+    while IFS= read -r entry; do
+        case "$(printf '%s' "$entry" | tr '[:upper:]' '[:lower:]')" in
+            rust|cargo) echo rust; return 0 ;;
+            python|python3|pytest|pip|ruff|setuptools) echo python; return 0 ;;
+            node|nodejs|node.js|npm|typescript|javascript|react|vue|angular) echo node; return 0 ;;
+            go|golang) echo go; return 0 ;;
+            flutter|dart) echo flutter; return 0 ;;
+        esac
+    done
+    echo generic
 }
 
 # ─── Migrate ─────────────────────────────────────────────────────────────
@@ -913,7 +934,9 @@ build_scaffold() {
         fi
         mkdir -p "$dir"
         git -C "$dir" init -q
-        (cd "$dir" && cmd_init "$name") > "${BUILD_STATE}/logs/scaffold-${name}.log" 2>&1 \
+        local ptype
+        ptype="$(yq -r ".projects[$i].stack // [] | .[]" "$plan" | stack_to_type)"
+        (cd "$dir" && ASIMOV_INIT_BUILD=1 ASIMOV_INIT_TYPE="$ptype" cmd_init "$name") > "${BUILD_STATE}/logs/scaffold-${name}.log" 2>&1 \
             || build_fail "asimov init failed in ${dir}; see .asimov-build/logs/scaffold-${name}.log"
 
         yq -i ".description = (load(\"${plan}\") | .projects[$i].description // \"\") |

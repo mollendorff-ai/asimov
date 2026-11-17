@@ -8,7 +8,6 @@ current:
   deliverables:
     - "Run a real build with Gemini CLI and with Codex CLI (tested with mocks only so far), in a sandbox; --max-usd does not apply to them, so cap with --max-loops, --max-hours and --stall"
     - "Collect what goes wrong in those runs and fix the top items"
-    - "Scaffold: record the project type as python (not generic) for a Python spec, and drop the interactive-mode advice ('run asimov to start') from the build's scaffold log"
 
 previous:
   version: "3.2.0"
