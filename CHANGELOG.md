@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.4.0
+
+- Build mode re-runs the quality gate itself before a milestone counts as
+  released. The agent runs with no approval prompts, so it can commit with
+  `git commit --no-verify` or weaken the project's own hook; until now it
+  was only told not to. Asimov runs its shipped pre-commit hook (not the
+  project's copy) on the committed code, using a temporary index read from
+  HEAD, so an uncommitted fix does not count and uncommitted files do not
+  block. A failure sends the milestone back with the end of the gate output
+  in the next run's prompt, and the full output in
+  `.asimov-build/logs/gate-<project>.log`. `--stall` failures in a row stop
+  the build with their own reason; `asimov resume` resets the count. A
+  broken-links report now also restores the roadmap from the plan, so an
+  agent that moved the milestone itself no longer skips it.
+- Build mode checks the quality gate's tools before the first paid run:
+  `ruff`, `pytest` and `pytest-cov` for Python, `cargo`, `rustfmt`, clippy
+  and `cargo-llvm-cov` for Rust, the Go and Flutter tools, and `npm` for
+  Node, for every language a project's stack names. A missing tool stops the
+  build with its install command, and `asimov resume` continues. The first
+  real build lost a paid run to a missing `pytest-cov`.
+- Build mode runs Claude only. Gemini CLI and Codex CLI are removed from it:
+  they were never run for real, have no spend cap, and there are no
+  subscriptions to test them with. `--ai gemini`, `--ai codex` and a
+  `build.default_ai` naming them are refused with the reason, `asimov
+  resume` refuses a build that used them and changes nothing, and
+  `launch.default_ai` no longer picks the build agent. Interactive launch
+  still supports all three.
+- The README and SECURITY.md say that `SHA256SUMS` only catches corruption,
+  not tampering, and that releases are not signed.
+
 ## 3.3.0
 
 - `asimov migrate` brings protocol files up to date. A project copy that is

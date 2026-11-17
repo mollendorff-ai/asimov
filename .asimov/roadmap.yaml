@@ -3,27 +3,18 @@
 # Decided in the feature review of 2026-11-17. bin/asimov stays one script.
 
 current:
-  version: "3.4.0"
-  title: "build mode hardening"
+  version: "3.5.0"
+  title: "trim"
   status: pending
   deliverables:
-    - "Build mode re-runs the quality gate itself before a milestone counts, since an agent can skip the pre-commit hook with git commit --no-verify (today it is only told not to); needs a mock-agent test"
-    # Done on this branch, not yet released: gate-tool preflight before the first
-    # paid run; Gemini CLI and Codex CLI removed from build mode; the README and
-    # SECURITY.md note that SHA256SUMS only catch corruption. Dropped: "one commit
-    # email in the build scaffold" - the real build's 11 commits all had one author.
+    - "Remove the pre-2.0 cleanup from asimov migrate (warmup.json, asimov.json, green.json, migrations.json, roles/, templates/, hooks/, protocols/), after confirming the owner's own projects are migrated"
+    - "Check the default launch settings (MAX_THINKING_TOKENS, CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, effort level) against current Claude Code and drop any that no longer do anything"
 
 previous:
-  version: "3.3.0"
-  title: "upgrades reach existing projects"
+  version: "3.4.0"
+  title: "build mode hardening"
 
-backlog:
-  - version: "3.5.0"
-    title: "trim"
-    status: pending
-    deliverables:
-      - "Remove the pre-2.0 cleanup from asimov migrate (warmup.json, asimov.json, green.json, migrations.json, roles/, templates/, hooks/, protocols/), after confirming the owner's own projects are migrated"
-      - "Check the default launch settings (MAX_THINKING_TOKENS, CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, effort level) against current Claude Code and drop any that no longer do anything"
+backlog: []
 
 # Held, not scheduled:
 # - asimov migrate --ai (the agent fills in description/stack/conventions,
