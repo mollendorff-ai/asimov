@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.2.0
+
+- Quality gate: the pre-commit hook checks the staged snapshot (what the
+  commit will contain), not the working tree. It copies the index to a
+  temporary folder and runs every check there, honouring `GIT_INDEX_FILE`
+  for partial commits. A commit can no longer pass on files that are not
+  staged, and the work tree is never touched. Installed dependency folders
+  are linked in; Rust builds reuse `target/`. A check that needs a
+  git-ignored file must have it staged. Projects get the new hook with
+  `asimov migrate`.
+
 ## 3.1.1
 
 - Build mode: the planning run counts toward `--max-usd`. It gets the
