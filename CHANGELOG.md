@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.5.0
+
+- `asimov migrate` no longer deletes the files and folders that asimov 1.x
+  left in `.asimov/` (`warmup.json`, `asimov.json`, `green.json`,
+  `migrations.json`, `roles/`, `templates/`, `hooks/`, `protocols/`). They
+  now show up under "Unexpected files" for you to remove by hand, like any
+  other stray file. Run the 3.4.0 or earlier migrate once on any project
+  that still has them if you want them removed automatically.
+- New global configs no longer set `MAX_THINKING_TOKENS`. Current Claude
+  Code models (Opus 4.7 and later, Sonnet 5 and later) always use adaptive
+  reasoning, where the effort level sets the depth and a fixed thinking
+  budget does nothing. The defaults that remain are the ones that act:
+  `CLAUDE_CODE_EFFORT_LEVEL: max`, which Claude Code still accepts, and
+  `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 1`, which is still experimental
+  and works in interactive sessions only (build mode runs headless). An
+  existing `~/.asimov/config.yaml` is left alone; delete the
+  `MAX_THINKING_TOKENS` line if you want it gone.
+- The README says agent teams are experimental, interactive-only and use
+  many more tokens, and links the effort levels to the model configuration
+  page.
+
 ## 3.4.0
 
 - Build mode re-runs the quality gate itself before a milestone counts as

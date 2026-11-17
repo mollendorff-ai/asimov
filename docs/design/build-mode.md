@@ -218,8 +218,8 @@ build:
       CLAUDE_CODE_EFFORT_LEVEL: "high"
 ```
 
-No 1,000,000-token thinking budget by default in build mode. The owner can
-raise it under `build.claude.env`.
+Interactive mode runs at effort `max`; build mode runs at `high`. The owner
+can change it under `build.claude.env`.
 
 ## Ref integration
 

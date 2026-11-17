@@ -5,7 +5,7 @@
 current:
   version: "3.5.0"
   title: "trim"
-  status: pending
+  status: released
   deliverables:
     - "Remove the pre-2.0 cleanup from asimov migrate (warmup.json, asimov.json, green.json, migrations.json, roles/, templates/, hooks/, protocols/), after confirming the owner's own projects are migrated"
     - "Check the default launch settings (MAX_THINKING_TOKENS, CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, effort level) against current Claude Code and drop any that no longer do anything"

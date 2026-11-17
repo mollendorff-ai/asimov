@@ -63,8 +63,11 @@ teardown() {
 
 # ─── Preserves other config ─────────────────────────────────────────────
 
-@test "migrate_global_config preserves MAX_THINKING_TOKENS" {
+# Configs made by older asimov versions carry MAX_THINKING_TOKENS, which new
+# configs no longer have (no effect on current models). It is left alone.
+@test "migrate_global_config leaves an existing MAX_THINKING_TOKENS alone" {
     create_test_config
+    yq -i '.launch.claude.env.MAX_THINKING_TOKENS = "1000000"' "$ASIMOV_GLOBAL_CONFIG"
     run migrate_global_config
     [ "$status" -eq 0 ]
     run yq -r '.launch.claude.env.MAX_THINKING_TOKENS' "$ASIMOV_GLOBAL_CONFIG"

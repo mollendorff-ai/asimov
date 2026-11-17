@@ -146,6 +146,15 @@ _add_mock_cli() {
     [ "$output" = "claude" ]
 }
 
+# MAX_THINKING_TOKENS does nothing on the models Claude Code runs now
+# (adaptive reasoning); the defaults that remain are the ones that act.
+@test "ensure_global_config writes effort and agent teams, not MAX_THINKING_TOKENS" {
+    ensure_global_config
+    [ "$(yq -r '.launch.claude.env.CLAUDE_CODE_EFFORT_LEVEL' "$HOME/.asimov/config.yaml")" = "max" ]
+    [ "$(yq -r '.launch.claude.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' "$HOME/.asimov/config.yaml")" = "1" ]
+    [ "$(yq '.launch.claude.env | has("MAX_THINKING_TOKENS")' "$HOME/.asimov/config.yaml")" = "false" ]
+}
+
 @test "ensure_global_config is idempotent" {
     mkdir -p "$HOME/.asimov"
     echo "custom: true" > "$HOME/.asimov/config.yaml"
