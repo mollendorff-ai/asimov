@@ -133,20 +133,22 @@ if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f requirements.txt ]; then
 
     # COVERAGE CHECK (100% required)
     echo ""
-    echo "[3/3] COVERAGE: pytest --cov=. --cov-fail-under=100"
-    if ! command -v pytest &>/dev/null; then
+    # Run pytest through the same interpreter that was checked for pytest-cov;
+    # the pytest on PATH can belong to a different environment without it.
+    echo "[3/3] COVERAGE: python -m pytest --cov=. --cov-fail-under=100"
+    if ! command -v python &>/dev/null || ! python -c "import pytest" 2>/dev/null; then
         echo ""
-        echo "❌ COVERAGE FAILED: pytest is not installed"
+        echo "❌ COVERAGE FAILED: pytest is not installed for python"
         echo "   Install: pip install pytest pytest-cov"
         exit 1
     fi
     if ! python -c "import pytest_cov" 2>/dev/null; then
         echo ""
-        echo "❌ COVERAGE FAILED: pytest-cov is not installed"
+        echo "❌ COVERAGE FAILED: pytest-cov is not installed for python"
         echo "   Install: pip install pytest-cov"
         exit 1
     fi
-    if ! pytest --cov=. --cov-fail-under=100; then
+    if ! python -m pytest --cov=. --cov-fail-under=100; then
         echo ""
         echo "❌ COVERAGE FAILED: Line coverage is below 100%"
         echo "   Add tests to cover all lines"

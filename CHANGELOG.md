@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.1.1
+
+- Build mode: the planning run counts toward `--max-usd`. It gets the
+  remaining budget as `--max-budget-usd`, its cost is added to the spend,
+  and `asimov resume` refuses to plan again once the budget is spent.
+- Build mode: the Python quality gate runs `python -m pytest` through the
+  interpreter it checked for pytest-cov, so a stray `pytest` on PATH can no
+  longer block every commit.
+
 ## 3.1.0
 
 - `asimov status`: one view of tools (yq flavour, jq, AI CLIs, ref,
@@ -196,5 +205,5 @@
 
 ## Pre-2.0
 
-Rust CLI archived at `mollendorff-ai/asimov-rust`.
-Tagged `v14.1.0-rust-final`.
+The earlier Rust CLI is kept privately and archived; it is not
+maintained or published here.

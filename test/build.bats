@@ -65,6 +65,7 @@ _mock_agent() {
 if [ "$(basename "$PWD")" = ".asimov-build" ]; then
     [ -f "$MOCK_PLAN" ] && cp "$MOCK_PLAN" plan.yaml
     [ -z "${MOCK_NO_ASSUMPTIONS:-}" ] && printf '# Assumptions\n\n- Storage: SQLite, simplest.\n- Auth: none in v0.1.\n' > ASSUMPTIONS.md
+    [ -n "${MOCK_PLAN_COST:-}" ] && echo "{\"type\":\"result\",\"total_cost_usd\":${MOCK_PLAN_COST},\"is_error\":false}"
     exit "${MOCK_EXIT:-0}"
 fi
 # In a project: act like an agent working on the current milestone
@@ -240,6 +241,38 @@ EOF
     grep -qx -- '-p' "$ARGS_LOG"
     grep -qx -- '--dangerously-skip-permissions' "$ARGS_LOG"
     grep -q 'env EFFORT=high THINKING=unset' "$ARGS_LOG"
+}
+
+@test "the planning run counts toward --max-usd and gets the budget" {
+    MOCK_PLAN_COST=0.4 run "$ASIMOV_BIN" build --max-usd 5 spec.md
+    [ "$status" -eq 0 ]
+    grep -qx -- '--output-format' "$ARGS_LOG"
+    grep -qx -- 'json' "$ARGS_LOG"
+    grep -qx -- '--max-budget-usd' "$ARGS_LOG"
+    grep -qx -- '5.00' "$ARGS_LOG"
+    [ "$(yq -r .spent_usd .asimov-build/state.yaml)" = "0.4000" ]
+}
+
+@test "the planning run has no budget flag without --max-usd, but its cost is counted" {
+    MOCK_PLAN_COST=0.25 run "$ASIMOV_BIN" build spec.md
+    [ "$status" -eq 0 ]
+    ! grep -qx -- '--max-budget-usd' "$ARGS_LOG"
+    [ "$(yq -r .spent_usd .asimov-build/state.yaml)" = "0.2500" ]
+}
+
+@test "a planning run that fails still has its cost counted" {
+    MOCK_PLAN_COST=0.3 MOCK_EXIT=1 run "$ASIMOV_BIN" build spec.md
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"planning run failed"* ]]
+    [ "$(yq -r .spent_usd .asimov-build/state.yaml)" = "0.3000" ]
+}
+
+@test "resume does not plan again when the budget is already spent" {
+    MOCK_PLAN_COST=0.4 MOCK_EXIT=1 run "$ASIMOV_BIN" build --max-usd 0.4 spec.md
+    [ "$status" -ne 0 ]
+    run "$ASIMOV_BIN" resume
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"(--max-usd)"* ]]
 }
 
 @test "plan uses gemini -p and codex exec when chosen" {

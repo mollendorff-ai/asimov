@@ -12,13 +12,13 @@ Only the latest release gets security fixes. `asimov update` installs it.
 
 Please do not open a public issue for a security problem.
 
-Email **security@mollendorff.ai** with:
+Use GitHub's private vulnerability reporting: open the **Security** tab of this repository and choose **Report a vulnerability**. If that is not available, email **security@mollendorff.ai**.
+
+Either way, include:
 
 - what you found and what it lets someone do,
 - steps that reproduce it,
 - the Asimov version (`asimov --version`), the agent CLI you used and your operating system.
-
-You can also use GitHub's private vulnerability reporting, under the **Security** tab of this repository, if it is enabled.
 
 Asimov is a personal tool kept up on a best-effort basis. I aim to reply within 14 days, and I will tell you what I plan to do about the report. Please give me reasonable time to ship a fix before you share the details publicly. I am glad to credit you in the release notes if you want that.
 
