@@ -132,6 +132,14 @@ teardown() {
     [ "$output" = "generic" ]
 }
 
+@test "init writes the format version" {
+    git init -q .
+    run "$ASIMOV_BIN" init
+    [ "$status" -eq 0 ]
+    run yq -r '.format' .asimov/project.yaml
+    [ "$output" = "1" ]
+}
+
 @test "init prints the next-step hint for people" {
     git init -q .
     run "$ASIMOV_BIN" init

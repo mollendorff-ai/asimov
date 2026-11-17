@@ -3,13 +3,15 @@
 # Personal tool, built for sandboxed environments. Claude Code, Gemini CLI, Codex CLI.
 set -euo pipefail
 
-ASIMOV_VERSION="3.2.1"
+ASIMOV_VERSION="3.3.0"
 ASIMOV_REPO="mollendorff-ai/asimov"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
 ASIMOV_PROJECT_CONFIG=".asimov/launch.yaml"
 ASIMOV_PROTOCOLS=(freshness.json sycophancy.json sprint.json coding-standards.json)
-ASIMOV_WARMUP_PROMPT="Read .asimov/roadmap.yaml. One-line summary of current sprint."
+# Layout version of .asimov/ (the `format` key in project.yaml). Projects made
+# before it existed have no key. Raise it when migrate learns a new upgrade step.
+ASIMOV_FORMAT=1
 
 # Resolve data directory (protocols, hooks)
 if [ -n "${ASIMOV_DATA:-}" ]; then
@@ -145,10 +147,20 @@ build_system_prompt() {
     [ -f .asimov/sprint.json ] && sprint=$(jq -r '.rule // empty' .asimov/sprint.json)
     [ -f .asimov/coding-standards.json ] && coding_standards=$(jq -r '.rule // empty' .asimov/coding-standards.json)
 
+    # The current sprint from the roadmap, so the agent starts on it without
+    # spending a turn reading the file (and keeps it through compaction)
+    local current_sprint="null"
+    if [ -f .asimov/roadmap.yaml ]; then
+        current_sprint="$(yq -o=json '.current // {}' .asimov/roadmap.yaml 2>/dev/null \
+            | jq -c '{version, title, status, deliverables} | if .version == null and .title == null then null else (.deliverables = ((.deliverables // [])[:12])) end' 2>/dev/null)" || true
+        [ -n "$current_sprint" ] || current_sprint="null"
+    fi
+
     # Need at least one thing to inject
-    [ -z "$name" ] && [ -z "$freshness" ] && [ -z "$sycophancy" ] && [ -z "$sprint" ] && [ -z "$coding_standards" ] && return 0
+    [ -z "$name" ] && [ -z "$freshness" ] && [ -z "$sycophancy" ] && [ -z "$sprint" ] && [ -z "$coding_standards" ] && [ "$current_sprint" = "null" ] && return 0
 
     jq -c -n \
+        --argjson current_sprint "$current_sprint" \
         --arg name "$name" \
         --arg type "$type" \
         --arg description "$description" \
@@ -158,7 +170,20 @@ build_system_prompt() {
         --arg sycophancy "$sycophancy" \
         --arg sprint "$sprint" \
         --arg coding_standards "$coding_standards" \
-        '{project:{name:$name,type:$type,description:$description,stack:$stack,conventions:$conventions},protocols:{freshness:$freshness,sycophancy:$sycophancy,sprint:$sprint,coding_standards:$coding_standards}}'
+        '{project:{name:$name,type:$type,description:$description,stack:$stack,conventions:$conventions},protocols:{freshness:$freshness,sycophancy:$sycophancy,sprint:$sprint,coding_standards:$coding_standards}}
+         + (if $current_sprint == null then {} else {current_sprint:$current_sprint} end)'
+}
+
+# One line about the current sprint, printed at launch: "3.3.0 title [status], 3 deliverables"
+sprint_summary() {
+    [ -f .asimov/roadmap.yaml ] || return 0
+    local v t s n
+    v="$(cfg_get .asimov/roadmap.yaml '.current.version')"
+    t="$(cfg_get .asimov/roadmap.yaml '.current.title')"
+    s="$(cfg_get .asimov/roadmap.yaml '.current.status')"
+    n="$(yq '.current.deliverables // [] | length' .asimov/roadmap.yaml 2>/dev/null || echo 0)"
+    [ -n "$v" ] || [ -n "$t" ] || return 0
+    printf 'Sprint: %s %s [%s], %s deliverable(s)\n' "$v" "$t" "${s:-no status}" "$n"
 }
 
 # ─── AI detection and launch ─────────────────────────────────────────────
@@ -273,23 +298,21 @@ launch_ai() {
     local sys_prompt
     sys_prompt=$(build_system_prompt)
 
-    # Claude: protocols go in the system prompt (outside the compacted
-    # transcript), then a warmup turn reads the roadmap, then interactive.
+    # The current sprint is part of the prompt (see build_system_prompt), so
+    # no turn is spent reading the roadmap; print what the agent was told.
+    sprint_summary
+
+    # Claude: protocols and the sprint go in the system prompt, outside the
+    # compacted transcript.
     if [ "$ai" = "claude" ]; then
         [ -n "$sys_prompt" ] && args+=("--append-system-prompt" "$sys_prompt")
-        if [ -f .asimov/roadmap.yaml ]; then
-            echo "Warming up..."
-            "$ai" "${args[@]}" -p "$ASIMOV_WARMUP_PROMPT"
-            echo ""
-            exec "$ai" "${args[@]}" --continue
-        fi
         echo "Launching ${ai}..."
         exec "$ai" "${args[@]}"
     fi
 
     # Gemini and Codex have no append-system-prompt flag, so protocols and
-    # the roadmap warmup are sent as the first message of the interactive
-    # session. Unlike Claude's system prompt, this can be lost on compaction.
+    # the sprint are sent as the first message of the interactive session.
+    # Unlike Claude's system prompt, this can be lost on compaction.
     local first_msg
     first_msg=$(build_first_message "$sys_prompt")
     echo "Launching ${ai}..."
@@ -306,12 +329,11 @@ launch_ai() {
 build_first_message() {
     local sys_prompt="$1" msg=""
     if [ -n "$sys_prompt" ]; then
-        msg="Follow these project rules for the whole session (JSON): ${sys_prompt}"
-    fi
-    if [ -f .asimov/roadmap.yaml ]; then
-        msg="${msg:+${msg}
-
-}${ASIMOV_WARMUP_PROMPT}"
+        local lead="Follow these project rules for the whole session"
+        case "$sys_prompt" in
+            *'"current_sprint"'*) lead="${lead}, and start on the current sprint in them" ;;
+        esac
+        msg="${lead} (JSON): ${sys_prompt}"
     fi
     [ -n "$msg" ] && printf '%s' "$msg"
     return 0
@@ -349,6 +371,8 @@ cmd_init() {
 
     # Generate project.yaml
     cat > .asimov/project.yaml << YAML
+format: ${ASIMOV_FORMAT}
+
 identity:
   name: "${name}"
   type: ${ptype}
@@ -420,6 +444,39 @@ stack_to_type() {
 
 # ─── Migrate ─────────────────────────────────────────────────────────────
 
+# SHA-256 of every earlier version of a protocol file that asimov has shipped
+# (the current version is read from the data dir). A project copy that matches
+# one of these was never edited, so migrate may replace it. Add the hash of the
+# old file here whenever a protocol changes.
+protocol_old_hashes() {
+    case "$1" in
+        freshness.json) echo 7ef3b77bdf63711dd89487d40a3d662aed63bc1817aec7a8fe62c0bca135ab10 ;;
+        sprint.json)    echo 21223217d54c38146d07fa2af728122d3105a627f22e029e2175d4cc56d7b9ad ;;
+    esac
+}
+
+# Bring a project's protocol file up to the shipped version: replace an old
+# shipped copy, keep one that was edited and show how it differs.
+# Prints what it did. Returns 0 if it replaced the file, 2 if it kept an edited
+# one (and said so), 1 if there was nothing to do.
+refresh_protocol() {
+    local f="$1" mine=".asimov/$1" shipped="${DATA_DIR}/protocols/$1" h old
+    [ -f "$mine" ] && [ -f "$shipped" ] || return 1
+    cmp -s "$mine" "$shipped" && return 1
+    h="$(sha256_of "$mine")"
+    for old in $(protocol_old_hashes "$f"); do
+        if [ "$h" = "$old" ]; then
+            cp "$shipped" "$mine"
+            echo "Refreshed .asimov/${f} (it was an older shipped version)"
+            return 0
+        fi
+    done
+    echo "Kept .asimov/${f}: it differs from the shipped version and is not an old one, so it looks edited."
+    echo "  Differences (< yours, > shipped); copy the shipped file over yours to take it:"
+    diff <(jq -S . "$mine" 2>/dev/null || cat "$mine") <(jq -S . "$shipped") | head -40 | sed 's/^/    /' || true
+    return 2
+}
+
 cmd_migrate() {
     if [ ! -d ".asimov" ]; then
         echo "No .asimov/ directory found. Nothing to migrate." >&2
@@ -428,6 +485,19 @@ cmd_migrate() {
 
     check_deps
     local changed=0
+
+    # A project made by a newer asimov may have a layout this one would damage
+    local fmt=""
+    [ -f .asimov/project.yaml ] && fmt="$(cfg_get .asimov/project.yaml '.format')"
+    if [ -n "$fmt" ] && ! [[ "$fmt" =~ ^[0-9]+$ ]]; then
+        echo "migrate: 'format' in .asimov/project.yaml must be a whole number (found '${fmt}'). Nothing was changed." >&2
+        exit 1
+    fi
+    if [ -n "$fmt" ] && [ "$fmt" -gt "$ASIMOV_FORMAT" ]; then
+        echo "migrate: this project uses format ${fmt}, newer than this asimov understands (${ASIMOV_FORMAT})." >&2
+        echo "Run 'asimov update' first. Nothing was changed." >&2
+        exit 1
+    fi
 
     # Remove old cruft files
     for f in warmup.json asimov.json green.json migrations.json; do
@@ -482,6 +552,18 @@ cmd_migrate() {
             echo "Added 'conventions' to project.yaml"
             changed=1
         fi
+
+        # Record the layout version. The steps above bring any older layout
+        # up to the current one, so this is the last thing migrate does to it.
+        if [ -z "$fmt" ]; then
+            yq -i ".format = ${ASIMOV_FORMAT}" .asimov/project.yaml
+            echo "Set format ${ASIMOV_FORMAT} in project.yaml"
+            changed=1
+        elif [ "$fmt" -lt "$ASIMOV_FORMAT" ]; then
+            yq -i ".format = ${ASIMOV_FORMAT}" .asimov/project.yaml
+            echo "Upgraded project.yaml format ${fmt} -> ${ASIMOV_FORMAT}"
+            changed=1
+        fi
     fi
 
     # Ensure 4 protocols exist (copy missing ones from data dir)
@@ -491,6 +573,13 @@ cmd_migrate() {
             echo "Added .asimov/${f}"
             changed=1
         fi
+    done
+
+    # Refresh protocols that are an older shipped version; keep edited ones
+    local rc
+    for f in "${ASIMOV_PROTOCOLS[@]}"; do
+        refresh_protocol "$f" && rc=0 || rc=$?
+        [ "$rc" -eq 1 ] || changed=1
     done
 
     # Update pre-commit hook if git repo
@@ -1431,6 +1520,13 @@ cmd_status() {
             st_warn "project.yaml has no description"
         else
             st_ok "project: $(cfg_get .asimov/project.yaml '.identity.name')"
+        fi
+        local pfmt
+        pfmt="$(cfg_get .asimov/project.yaml '.format')"
+        if [ -z "$pfmt" ] || ! [[ "$pfmt" =~ ^[0-9]+$ ]] || [ "$pfmt" -lt "$ASIMOV_FORMAT" ]; then
+            st_warn ".asimov/ format is old or unset (asimov migrate)"
+        elif [ "$pfmt" -gt "$ASIMOV_FORMAT" ]; then
+            st_warn ".asimov/ format ${pfmt} is newer than this asimov (asimov update)"
         fi
         if [ -f .asimov/roadmap.yaml ]; then
             st_ok "roadmap: $(cfg_get .asimov/roadmap.yaml '.current.version') $(cfg_get .asimov/roadmap.yaml '.current.title') [$(cfg_get .asimov/roadmap.yaml '.current.status')]"

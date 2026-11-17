@@ -98,6 +98,7 @@ YAML
 @test "migrate leaves fully enriched project.yaml untouched" {
     mkdir -p .asimov
     cat > .asimov/project.yaml << 'YAML'
+format: 1
 identity:
   name: slimproj
   type: node
@@ -196,6 +197,7 @@ YAML
 @test "migrate reports up to date when nothing to do" {
     mkdir -p .asimov
     cat > .asimov/project.yaml << 'YAML'
+format: 1
 identity:
   name: cleanproj
   type: shell
@@ -213,4 +215,153 @@ YAML
     run "$ASIMOV_BIN" migrate
     [ "$status" -eq 0 ]
     [[ "$output" == *"Already up to date"* ]]
+}
+
+# ─── Protocol refresh ───────────────────────────────────────────────────
+
+OLD_PROTOCOLS="${PROJECT_ROOT}/test/fixtures/old-protocols"
+
+_project_with_current_protocols() {
+    mkdir -p .asimov
+    printf 'identity:\n  name: refresh\n  type: shell\ndescription: "x"\nstack: []\nconventions: []\n' > .asimov/project.yaml
+    cp "${PROJECT_ROOT}/protocols/"*.json .asimov/
+}
+
+@test "migrate refreshes a freshness protocol that is an older shipped version" {
+    _project_with_current_protocols
+    cp "${OLD_PROTOCOLS}/freshness-2.1.0.json" .asimov/freshness.json
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Refreshed .asimov/freshness.json"* ]]
+    cmp -s .asimov/freshness.json "${PROJECT_ROOT}/protocols/freshness.json"
+}
+
+@test "migrate refreshes a sprint protocol that is an older shipped version" {
+    _project_with_current_protocols
+    cp "${OLD_PROTOCOLS}/sprint-2.1.0.json" .asimov/sprint.json
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" == *"Refreshed .asimov/sprint.json"* ]]
+    cmp -s .asimov/sprint.json "${PROJECT_ROOT}/protocols/sprint.json"
+}
+
+@test "migrate refreshes several old protocols in one run" {
+    _project_with_current_protocols
+    cp "${OLD_PROTOCOLS}/freshness-2.1.0.json" .asimov/freshness.json
+    cp "${OLD_PROTOCOLS}/sprint-2.1.0.json" .asimov/sprint.json
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" == *"Refreshed .asimov/freshness.json"* ]]
+    [[ "$output" == *"Refreshed .asimov/sprint.json"* ]]
+    [[ "$output" == *"Migration complete."* ]]
+}
+
+@test "migrate keeps an edited protocol and shows how it differs" {
+    _project_with_current_protocols
+    printf '{\n  "rule": "my own freshness rule"\n}\n' > .asimov/freshness.json
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Kept .asimov/freshness.json"* ]]
+    [[ "$output" == *"looks edited"* ]]
+    [[ "$output" == *"< "*"my own freshness rule"* ]]
+    [[ "$output" == *"> "*"ref fetch"* ]]
+    [[ "$output" != *"Already up to date."* ]]
+    [ "$(jq -r .rule .asimov/freshness.json)" = "my own freshness rule" ]
+}
+
+@test "migrate keeps an old protocol that was also edited" {
+    _project_with_current_protocols
+    sed 's/NEVER stop/NEVER stop, ever/' "${OLD_PROTOCOLS}/sprint-2.1.0.json" > .asimov/sprint.json
+    ! cmp -s .asimov/sprint.json "${OLD_PROTOCOLS}/sprint-2.1.0.json"
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" == *"Kept .asimov/sprint.json"* ]]
+    grep -q 'NEVER stop, ever' .asimov/sprint.json
+}
+
+@test "migrate keeps a protocol that is not valid JSON and does not crash" {
+    _project_with_current_protocols
+    echo 'not json at all' > .asimov/sycophancy.json
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Kept .asimov/sycophancy.json"* ]]
+    [ "$(cat .asimov/sycophancy.json)" = "not json at all" ]
+}
+
+@test "migrate says nothing about protocols that are already current" {
+    _project_with_current_protocols
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" != *"Refreshed"* ]]
+    [[ "$output" != *"Kept"* ]]
+}
+
+@test "migrate refreshes an old protocol once, then leaves it alone" {
+    _project_with_current_protocols
+    cp "${OLD_PROTOCOLS}/freshness-2.1.0.json" .asimov/freshness.json
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" == *"Refreshed .asimov/freshness.json"* ]]
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" != *"Refreshed"* ]]
+}
+
+# ─── Format version ─────────────────────────────────────────────────────
+
+_project_without_format() {
+    mkdir -p .asimov
+    printf 'identity:\n  name: old\n  type: shell\ndescription: "x"\nstack: []\nconventions: []\n' > .asimov/project.yaml
+    cp "${PROJECT_ROOT}/protocols/"*.json .asimov/
+}
+
+@test "migrate sets the format version on a project that has none" {
+    _project_without_format
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Set format 1 in project.yaml"* ]]
+    [ "$(yq -r .format .asimov/project.yaml)" = "1" ]
+}
+
+@test "migrate upgrades an older format version" {
+    _project_without_format
+    yq -i '.format = 0' .asimov/project.yaml
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Upgraded project.yaml format 0 -> 1"* ]]
+    [ "$(yq -r .format .asimov/project.yaml)" = "1" ]
+}
+
+@test "migrate leaves a current format version alone" {
+    _project_without_format
+    yq -i '.format = 1' .asimov/project.yaml
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" != *"format"* ]]
+    [ "$(yq -r .format .asimov/project.yaml)" = "1" ]
+}
+
+@test "migrate refuses a project with a newer format and changes nothing" {
+    _project_without_format
+    yq -i '.format = 99' .asimov/project.yaml
+    echo '{}' > .asimov/warmup.json
+    before="$(cat .asimov/project.yaml)"
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"newer than this asimov understands"* ]]
+    [[ "$output" == *"asimov update"* ]]
+    [ -f .asimov/warmup.json ]
+    [ "$(cat .asimov/project.yaml)" = "$before" ]
+}
+
+@test "migrate refuses a format that is not a whole number" {
+    _project_without_format
+    yq -i '.format = "two"' .asimov/project.yaml
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"must be a whole number"* ]]
+}
+
+@test "migrate sets the format version after the other upgrades, in one run" {
+    mkdir -p .asimov
+    printf 'identity:\n  name: bare\n  type: shell\n' > .asimov/project.yaml
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 0 ]
+    [ "$(yq -r .format .asimov/project.yaml)" = "1" ]
+    [ "$(yq -r '.stack | length' .asimov/project.yaml)" = "0" ]
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" == *"Already up to date."* ]]
 }

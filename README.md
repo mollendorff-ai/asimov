@@ -35,8 +35,9 @@ Autonomy without guardrails produces fast garbage. Asimov pairs the two:
 - **Behavioral protocols** -- short JSON rules (honesty over comfort, coding
   standards, autonomous sprint lifecycle, web fetching) given to the agent at
   launch.
-- **Session warmup** -- the agent reads your roadmap before you type anything,
-  so it starts on the current sprint.
+- **Current sprint** -- your roadmap's current milestone is put in the
+  agent's prompt, so it starts on the current sprint before you type
+  anything, without spending a turn reading the file.
 - **Quality gate** -- a pre-commit hook that blocks any commit that is not
   formatted, lint-clean and 100% covered. The agent cannot ship unchecked
   code; it has to fix it.
@@ -79,7 +80,7 @@ Interactive, in an existing project:
 ```bash
 cd your-project
 asimov init        # scaffold .asimov/, install pre-commit hook
-asimov             # launch the AI with protocols + roadmap warmup
+asimov             # launch the AI with protocols + the current sprint
 asimov migrate     # bring an older .asimov/ up to date
 ```
 
@@ -104,7 +105,7 @@ asimov config get  # show the config; set and unset change it
 
 ```text
 .asimov/
-├── project.yaml          # identity, description, stack, conventions
+├── project.yaml          # format version, identity, description, stack, conventions
 ├── roadmap.yaml          # current milestone + backlog
 ├── freshness.json        # protocol: prefer ref fetch for web pages
 ├── sycophancy.json       # protocol: truth over comfort
@@ -116,13 +117,12 @@ asimov config get  # show the config; set and unset change it
 ## How each AI gets the protocols
 
 - **Claude Code** -- protocols via `--append-system-prompt` (system
-  prompt, outside the compacted transcript); roadmap warmup as a separate
-  `-p` turn, then `--continue`; autonomy via
-  `--dangerously-skip-permissions`.
-- **Gemini CLI** -- protocols and warmup in the first message via
-  `--prompt-interactive`; autonomy via `--approval-mode=yolo`.
-- **Codex CLI** -- protocols and warmup in the first message (initial
-  prompt); autonomy via `--full-auto`.
+  prompt, outside the compacted transcript), with the current sprint from
+  your roadmap; autonomy via `--dangerously-skip-permissions`.
+- **Gemini CLI** -- protocols and the current sprint in the first message
+  via `--prompt-interactive`; autonomy via `--approval-mode=yolo`.
+- **Codex CLI** -- protocols and the current sprint in the first message
+  (initial prompt); autonomy via `--full-auto`.
 
 Claude Code is the primary target. Gemini CLI and Codex CLI have no flag to
 append to the system prompt, so their protocols arrive as the first message
@@ -229,9 +229,9 @@ is the point of the tool:
 - `--approval-mode=yolo` -- Gemini CLI auto-approves all actions ([docs][gem-cli])
 - `--full-auto` -- Codex CLI autonomous mode ([docs][codex-cli])
 
-The cost is real: every Claude launch spends one extra warmup turn on the
-largest model at maximum effort. And again: an agent with these flags can
-run any command your user can. Sandbox only.
+The cost is real: the largest model at maximum effort is the most
+expensive way to run. And again: an agent with these flags can run any
+command your user can. Sandbox only.
 
 ## Protocols
 
@@ -241,6 +241,11 @@ run any command your user can. Sandbox only.
 | `sycophancy.json` | Accuracy over comfort |
 | `sprint.json` | Status `autonomous`: work until deliverables are done |
 | `coding-standards.json` | Readable code, tests as docs, zero warnings |
+
+After `asimov update`, run `asimov migrate` in each project to bring its
+protocol files up to date. A file that is an older version Asimov shipped
+is replaced. A file you edited is kept, and migrate shows how it differs
+from the shipped one so you can merge by hand.
 
 ## Quality gate
 
