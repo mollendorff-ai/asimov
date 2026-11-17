@@ -24,7 +24,7 @@ Asimov is a personal tool kept up on a best-effort basis. I aim to reply within 
 
 ## What is in scope
 
-- `install.sh` and `asimov update`, which download a release from GitHub and check every file against its SHA256SUMS before installing.
+- `install.sh` and `asimov update`, which download a release from GitHub and check every file against its SHA256SUMS before installing. The SHA256SUMS come from the same release as the files, so they catch corruption and bad downloads, not a compromised release or GitHub account; releases are not signed.
 - Anything that makes the sandbox setting (`build.sandbox`) or the spending cap (`--max-usd`) fail to do what the README says.
 - The pre-commit hook and the other files Asimov writes into a project: whether they can be made to run something the user did not ask for.
 - How build mode reads spec files and URLs, and what it does with them.

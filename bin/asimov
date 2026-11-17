@@ -3,7 +3,7 @@
 # Personal tool, built for sandboxed environments. Claude Code, Gemini CLI, Codex CLI.
 set -euo pipefail
 
-ASIMOV_VERSION="3.3.0"
+ASIMOV_VERSION="3.4.0"
 ASIMOV_REPO="mollendorff-ai/asimov"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
@@ -426,20 +426,39 @@ YAML
     fi
 }
 
+# The language a stack entry names (rust, python, node, go, flutter), or nothing
+stack_entry_type() {
+    case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+        rust|cargo) echo rust ;;
+        python|python3|pytest|pip|ruff|setuptools) echo python ;;
+        node|nodejs|node.js|npm|typescript|javascript|react|vue|angular) echo node ;;
+        go|golang) echo go ;;
+        flutter|dart) echo flutter ;;
+    esac
+}
+
 # Project type for .asimov/project.yaml from a plan's stack list (stdin, one
 # entry per line): the first entry that names a language asimov knows
 stack_to_type() {
-    local entry
+    local entry t
     while IFS= read -r entry; do
-        case "$(printf '%s' "$entry" | tr '[:upper:]' '[:lower:]')" in
-            rust|cargo) echo rust; return 0 ;;
-            python|python3|pytest|pip|ruff|setuptools) echo python; return 0 ;;
-            node|nodejs|node.js|npm|typescript|javascript|react|vue|angular) echo node; return 0 ;;
-            go|golang) echo go; return 0 ;;
-            flutter|dart) echo flutter; return 0 ;;
-        esac
+        t="$(stack_entry_type "$entry")"
+        [ -n "$t" ] && { echo "$t"; return 0; }
     done
     echo generic
+}
+
+# Every language a stack names, once each (stdin, one entry per line): the
+# pre-commit hook runs the checks of each language whose marker file exists
+stack_gate_types() {
+    local entry t seen=" "
+    while IFS= read -r entry; do
+        t="$(stack_entry_type "$entry")"
+        [ -n "$t" ] || continue
+        [[ "$seen" == *" ${t} "* ]] && continue
+        seen="${seen}${t} "
+        echo "$t"
+    done
 }
 
 # ─── Migrate ─────────────────────────────────────────────────────────────
@@ -843,27 +862,29 @@ build_check_sources() {
     exit 1
 }
 
+# Build mode runs Claude only. Gemini CLI and Codex CLI build runs were never
+# run for real, have no way to cap spend, and could not be tested without
+# subscriptions; they stay available for interactive use. A build started by
+# an earlier version with another agent is refused here, with the reason.
+build_require_claude() {
+    [ "$1" = "claude" ] && return 0
+    build_fail "build mode runs Claude only (this build uses '${1}'). Gemini CLI and Codex CLI are for interactive use: run asimov in a project. To continue this build with Claude, set 'ai: claude' in .asimov-build/state.yaml."
+}
+
 # Load agent settings for build mode into AGENT_ARGS and the environment.
-# build.<ai>.* wins; args and model fall back to launch.<ai>.*; env does not
-# (build mode avoids the interactive maximum-thinking defaults).
+# build.claude.* wins; args and model fall back to launch.claude.*; env does
+# not (build mode avoids the interactive maximum-thinking defaults).
 load_build_agent() {
     local ai="$1" model args_list env_list
+    build_require_claude "$ai"
     model="$(cfg_get "$ASIMOV_GLOBAL_CONFIG" ".build.${ai}.model")"
     [ -z "$model" ] && model="$(cfg_get "$ASIMOV_GLOBAL_CONFIG" ".launch.${ai}.model")"
     args_list="$(cfg_list "$ASIMOV_GLOBAL_CONFIG" ".build.${ai}.args")"
     [ -z "$args_list" ] && args_list="$(cfg_list "$ASIMOV_GLOBAL_CONFIG" ".launch.${ai}.args")"
-    if [ -z "$args_list" ]; then
-        case "$ai" in
-            claude) args_list="--dangerously-skip-permissions" ;;
-            gemini) args_list="--approval-mode=yolo" ;;
-            codex)  args_list="--full-auto" ;;
-        esac
-    fi
+    [ -z "$args_list" ] && args_list="--dangerously-skip-permissions"
     env_list="$(cfg_env "$ASIMOV_GLOBAL_CONFIG" ".build.${ai}.env")"
-    if [ -z "$env_list" ]; then
-        case "$ai" in claude) env_list="CLAUDE_CODE_EFFORT_LEVEL=high" ;; esac
-    fi
-    [ -z "$model" ] && [ "$ai" = "claude" ] && model="opus"
+    [ -z "$env_list" ] && env_list="CLAUDE_CODE_EFFORT_LEVEL=high"
+    [ -z "$model" ] && model="opus"
 
     while IFS= read -r line; do
         # shellcheck disable=SC2163
@@ -887,16 +908,12 @@ claude_log_cost() {
 agent_run() {
     local ai="$1" dir="$2" prompt="$3" log="$4" budget="${5:-}"
     mkdir -p "$(dirname "$log")"
+    build_require_claude "$ai"
     (
         cd "$dir"
-        case "$ai" in
-            claude)
-                local extra=(--output-format json)
-                [ -n "$budget" ] && extra+=(--max-budget-usd "$budget")
-                claude "${AGENT_ARGS[@]}" "${extra[@]}" -p "$prompt" ;;
-            gemini) gemini "${AGENT_ARGS[@]}" -p "$prompt" ;;
-            codex)  codex exec "${AGENT_ARGS[@]}" --skip-git-repo-check "$prompt" ;;
-        esac
+        local extra=(--output-format json)
+        [ -n "$budget" ] && extra+=(--max-budget-usd "$budget")
+        claude "${AGENT_ARGS[@]}" "${extra[@]}" -p "$prompt"
     ) > "$log" 2>&1
 }
 
@@ -1038,11 +1055,7 @@ build_scaffold() {
         cp "${BUILD_STATE}/ASSUMPTIONS.md" "${dir}/docs/ASSUMPTIONS.md"
 
         if command -v ref &>/dev/null; then
-            case "$ai" in
-                claude) printf '{\n  "mcpServers": {\n    "ref": {"command": "ref", "args": ["mcp"]}\n  }\n}\n' > "${dir}/.mcp.json" ;;
-                gemini) mkdir -p "${dir}/.gemini"
-                        printf '{\n  "mcpServers": {\n    "ref": {"command": "ref", "args": ["mcp"]}\n  }\n}\n' > "${dir}/.gemini/settings.json" ;;
-            esac
+            printf '{\n  "mcpServers": {\n    "ref": {"command": "ref", "args": ["mcp"]}\n  }\n}\n' > "${dir}/.mcp.json"
         fi
         echo "  ${name}/  git repo, .asimov/, docs/specs/"
     done
@@ -1130,34 +1143,18 @@ BUILD_LOOP_PROMPT='You are building this project unattended. Nobody will answer 
 
 # One agent run in a project; prints the run cost in USD (0 if unknown)
 build_agent_turn() {
-    local ai="$1" dir="$2" prompt="$3" log="$4" budget="$5" sp first
+    local ai="$1" dir="$2" prompt="$3" log="$4" budget="$5" sp
+    build_require_claude "$ai"
     sp="$(cd "$dir" && build_system_prompt)"
     mkdir -p "$(dirname "$log")"
     (
         cd "$dir"
-        case "$ai" in
-            claude)
-                local extra=(--output-format json)
-                [ -n "$sp" ] && extra+=(--append-system-prompt "$sp")
-                [ -n "$budget" ] && extra+=(--max-budget-usd "$budget")
-                claude "${AGENT_ARGS[@]}" "${extra[@]}" -p "$prompt" ;;
-            gemini|codex)
-                first=""
-                [ -n "$sp" ] && first="Follow these project rules for the whole session (JSON): ${sp}
-
-"
-                if [ "$ai" = "gemini" ]; then
-                    gemini "${AGENT_ARGS[@]}" -p "${first}${prompt}"
-                else
-                    codex exec "${AGENT_ARGS[@]}" "${first}${prompt}"
-                fi ;;
-        esac
+        local extra=(--output-format json)
+        [ -n "$sp" ] && extra+=(--append-system-prompt "$sp")
+        [ -n "$budget" ] && extra+=(--max-budget-usd "$budget")
+        claude "${AGENT_ARGS[@]}" "${extra[@]}" -p "$prompt"
     ) > "$log" 2>&1 || true
-    if [ "$ai" = "claude" ]; then
-        claude_log_cost "$log"
-    else
-        echo 0
-    fi
+    claude_log_cost "$log"
 }
 
 # Links in README and docs must work before a milestone counts as released.
@@ -1176,6 +1173,25 @@ build_link_check() {
         ref check-links "$f" >> "$report" 2>/dev/null || ok=1
     done
     return "$ok"
+}
+
+# Asimov runs the quality gate itself on what HEAD holds before a milestone
+# counts: an agent can commit with --no-verify or weaken the project's own
+# hook, so this runs the shipped hook, not .git/hooks/pre-commit. The hook
+# checks the index, so a temporary index read from HEAD makes it check exactly
+# what was committed. Returns 1 when the gate fails, with its output in $2.
+build_gate_check() {
+    local dir="$1" log="$2" hook="${DATA_DIR}/hooks/pre-commit" tmp rc=0
+    [ -f "$hook" ] || build_fail "the quality gate is missing: ${hook} (reinstall Asimov)"
+    mkdir -p "$(dirname "$log")"
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/asimov-index.XXXXXX")"
+    (
+        cd "$dir"
+        export GIT_INDEX_FILE="${tmp}/index"
+        git read-tree HEAD && bash "$hook"
+    ) > "$log" 2>&1 || rc=1
+    rm -rf "$tmp"
+    return "$rc"
 }
 
 build_stop() {
@@ -1205,7 +1221,7 @@ build_execute() {
         dir="${BUILD_DIR}/${name}"
         [ "$(pstate_get "$name" finished)" = "true" ] && continue
         ensure_git_identity "$dir"
-        local idx milestones loops stall
+        local idx milestones loops stall gate_fails gate_log
         idx="$(pstate_get "$name" milestone)"; idx="${idx:-0}"
         milestones="$(yq ".projects[$p].milestones | length" "$plan")"
         echo ""
@@ -1217,6 +1233,9 @@ build_execute() {
             stall="$(pstate_get "$name" stall)"; stall="${stall:-0}"
             [ "$loops" -ge "$max_loops" ] && build_stop "${name}: reached ${max_loops} agent runs (--max-loops)"
             [ "$stall" -ge "$stall_cap" ] && build_stop "${name}: ${stall} runs in a row without a new commit (--stall)"
+            gate_fails="$(pstate_get "$name" gate_fails)"; gate_fails="${gate_fails:-0}"
+            gate_log="${BUILD_STATE}/logs/gate-${name}.log"
+            [ "$gate_fails" -ge "$stall_cap" ] && build_stop "${name}: the committed code failed the quality gate ${gate_fails} times in a row (--stall), see ${gate_log}"
             [ "$(date +%s)" -ge "$deadline" ] && build_stop "reached ${max_hours} hours (--max-hours)"
             local spent budget=""
             spent="$(state_get spent_usd)"; spent="${spent:-0}"
@@ -1228,6 +1247,12 @@ build_execute() {
             local version before after cost prompt="$BUILD_LOOP_PROMPT" report
             version="$(yq -r '.current.version' "${dir}/.asimov/roadmap.yaml")"
             report="${BUILD_STATE}/logs/links-${name}.json"
+            if [ "$(pstate_get "$name" gate_failed)" = "true" ]; then
+                prompt="${prompt}
+
+The milestone was marked released, but the committed code (HEAD) fails the quality gate, so a commit skipped or weakened the pre-commit hook. Never use git commit --no-verify and never change .git/hooks/pre-commit. Fix the code, commit it through the gate, then mark the milestone released again. The end of the gate output:
+$(tail -c 4000 "$gate_log")"
+            fi
             if [ "$(pstate_get "$name" links_failed)" = "true" ]; then
                 prompt="${prompt}
 
@@ -1255,10 +1280,21 @@ $(head -c 4000 "$report")"
             if [ "$status" != "released" ] && ! { [ "$prev" = "$version" ] && [ "$(yq -r '.current.version // ""' "${dir}/.asimov/roadmap.yaml")" != "$version" ]; }; then
                 continue
             fi
+            # Sent back: the roadmap is rewritten from the plan, which also
+            # undoes an agent that moved the milestone to previous itself
+            if ! build_gate_check "$dir" "$gate_log"; then
+                echo "  ${name} ${version}: the committed code fails the quality gate, sending back"
+                pstate_set "$name" gate_failed true
+                pstate_set "$name" gate_fails $((gate_fails + 1))
+                write_roadmap "$p" "$idx" "$dir"
+                continue
+            fi
+            pstate_set "$name" gate_failed false
+            pstate_set "$name" gate_fails 0
             if ! build_link_check "$dir" "$report"; then
                 echo "  ${name} ${version}: broken links, sending back"
                 pstate_set "$name" links_failed true
-                yq -i '.current.status = "autonomous"' "${dir}/.asimov/roadmap.yaml"
+                write_roadmap "$p" "$idx" "$dir"
                 continue
             fi
             pstate_set "$name" links_failed false
@@ -1283,6 +1319,71 @@ $(head -c 4000 "$report")"
     return 0
 }
 
+# Tools the pre-commit gate needs for one language that are not installed,
+# one "tool|how to get it" line each. Mirrors hooks/pre-commit.
+gate_missing_tools() {
+    case "$1" in
+        rust)
+            if ! command -v cargo &>/dev/null; then
+                echo "cargo|install Rust: https://rustup.rs"
+                return 0
+            fi
+            cargo fmt --version &>/dev/null || echo "rustfmt|rustup component add rustfmt"
+            cargo clippy --version &>/dev/null || echo "clippy|rustup component add clippy"
+            command -v cargo-llvm-cov &>/dev/null || echo "cargo-llvm-cov|cargo install cargo-llvm-cov, then rustup component add llvm-tools-preview"
+            ;;
+        python)
+            command -v ruff &>/dev/null || echo "ruff|pip install ruff"
+            if ! command -v python &>/dev/null; then
+                echo "python|install Python 3"
+            else
+                python -c "import pytest" 2>/dev/null || echo "pytest (for python)|pip install pytest pytest-cov"
+                python -c "import pytest_cov" 2>/dev/null || echo "pytest-cov (for python)|pip install pytest-cov"
+            fi
+            ;;
+        node)
+            command -v npm &>/dev/null || echo "npm|install Node.js"
+            ;;
+        go)
+            command -v go &>/dev/null || echo "go|install Go: https://go.dev/dl/"
+            command -v gofumpt &>/dev/null || echo "gofumpt|go install mvdan.cc/gofumpt@latest"
+            command -v golangci-lint &>/dev/null || echo "golangci-lint|go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+            command -v go-test-coverage &>/dev/null || echo "go-test-coverage|go install github.com/vladopajic/go-test-coverage/v2@latest"
+            ;;
+        flutter)
+            command -v flutter &>/dev/null || echo "flutter|install Flutter: https://docs.flutter.dev/get-started/install"
+            command -v lcov &>/dev/null || echo "lcov|brew install lcov (macOS) or apt install lcov (Linux)"
+            ;;
+    esac
+    return 0
+}
+
+# Before the first paid build run, check that the quality gate can run for
+# every project's stack. Every commit goes through the gate, so a missing tool
+# blocks all of them, and the first real build lost its first run to this.
+# Stops with the install hints; asimov resume continues once they are fixed.
+build_preflight() {
+    local plan="${BUILD_STATE}/plan.yaml" count i name t line problems=()
+    count="$(yq '.projects | length' "$plan")"
+    for ((i = 0; i < count; i++)); do
+        name="$(yq -r ".projects[$i].name" "$plan")"
+        while IFS= read -r t; do
+            while IFS= read -r line; do
+                [ -n "$line" ] || continue
+                problems+=("${name} (${t}): ${line%%|*}  --  ${line#*|}")
+            done < <(gate_missing_tools "$t")
+        done < <(yq -r ".projects[$i].stack // [] | .[]" "$plan" | stack_gate_types)
+    done
+    if [ ${#problems[@]} -gt 0 ]; then
+        echo "build: the quality gate needs tools that are not installed:" >&2
+        printf '  %s\n' "${problems[@]}" >&2
+        echo "Every commit goes through the gate, so the build would stop at its first one." >&2
+        echo "Install them, then run: asimov resume" >&2
+        exit 1
+    fi
+    return 0
+}
+
 # Run the build from whatever phase state.yaml records
 build_continue() {
     local phase
@@ -1293,6 +1394,7 @@ build_continue() {
             build_continue ;;
         planned)
             if [ "$(state_get approved)" = "true" ]; then
+                build_preflight
                 build_scaffold
                 build_continue
             else
@@ -1304,6 +1406,7 @@ build_continue() {
         awaiting_approval)
             build_stop_for_approval ;;
         approved)
+            build_preflight
             build_scaffold
             build_continue ;;
         scaffolded|executing|stopped)
@@ -1324,7 +1427,7 @@ cmd_build() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --dir)  dir="${2:?--dir needs a path}"; shift 2 ;;
-            --ai)   ai="${2:?--ai needs claude, gemini or codex}"; shift 2 ;;
+            --ai)   ai="${2:?--ai needs a name (build mode runs claude only)}"; shift 2 ;;
             --yes)  yes=1; shift ;;
             -h|--help) show_build_help; return 0 ;;
             -*)     build_fail "unknown option $1 (asimov build --help)" ;;
@@ -1332,10 +1435,10 @@ cmd_build() {
         esac
     done
     [ ${#specs[@]} -gt 0 ] || build_fail "no specs given (asimov build --help)"
+    # launch.default_ai is the interactive choice and does not apply here
     [ -z "$ai" ] && ai="$(cfg_get "$ASIMOV_GLOBAL_CONFIG" '.build.default_ai')"
-    [ -z "$ai" ] && ai="$(cfg_get "$ASIMOV_GLOBAL_CONFIG" '.launch.default_ai')"
     [ -z "$ai" ] && ai="claude"
-    case "$ai" in claude|gemini|codex) ;; *) build_fail "unknown AI '${ai}' (claude, gemini or codex)" ;; esac
+    build_require_claude "$ai"
 
     build_check_sandbox
     build_check_tools "$ai" "${specs[@]}"
@@ -1386,12 +1489,13 @@ cmd_resume() {
     parse_cap_options "$@"
     build_init_paths "${REST[0]:-.}"
     [ -f "$(state_file)" ] || build_fail "no build in ${BUILD_DIR} (no .asimov-build/state.yaml)"
+    build_require_claude "$(state_get ai)"
     save_caps
-    # A stall or block was the reason to stop: start counting afresh
+    # A stall, gate failures or a block was the reason to stop: count afresh
     if [ "$(state_get phase)" = "stopped" ]; then
         local n
         while IFS= read -r n; do
-            [ -n "$n" ] && pstate_set "$n" stall 0
+            [ -n "$n" ] && pstate_set "$n" stall 0 && pstate_set "$n" gate_fails 0
         done < <(yq -r '.projects // {} | keys | .[]' "$(state_file)")
     fi
     local ai
@@ -1422,15 +1526,21 @@ Specs: .md, .txt, .pdf (needs ref), .docx (needs pandoc), or a URL (needs ref).
 
 Options:
     --dir <path>    build folder (default: current folder)
-    --ai <name>     claude, gemini or codex (default: build.default_ai,
-                    then launch.default_ai)
+    --ai <name>     claude (the only agent build mode runs; default:
+                    build.default_ai, then claude)
     --yes           skip the approval stop
 
 Caps (build, approve and resume; a build never runs open-ended):
     --max-loops <n> agent runs per project (default 40)
     --max-hours <h> hours per build session (default 8)
-    --max-usd <x>   total spend, Claude only (default: none)
-    --stall <n>     stop after n runs with no new commit (default 3)
+    --max-usd <x>   total spend, planning included (default: none)
+    --stall <n>     stop after n runs with no new commit, or n failed
+                    quality gates in a row (default 3)
+
+Before the first paid run, the quality gate's tools are checked for each
+project's stack; asimov resume continues once any that are missing are
+installed. A milestone counts only when the committed code passes the
+quality gate, run by Asimov itself (a commit can skip the hook).
 
 Needs build.sandbox: true in ~/.asimov/config.yaml (sandbox only).
 Design: docs/design/build-mode.md

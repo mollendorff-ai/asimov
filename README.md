@@ -22,9 +22,10 @@ Two modes:
 > assistance.
 
 Status: personal, no stability promises. Its author uses interactive mode
-in a sandbox. Build mode is new in v3.0.0: tested with mock agents and one
-small real build with Claude (3 milestones, 3 runs, $0.84); Gemini and
-Codex build runs are tested with mocks only.
+in a sandbox. Build mode is new in v3.0.0 and runs Claude only: it is
+tested with mock agents and with small real builds with Claude. Gemini CLI
+and Codex CLI are for interactive use; their build runs were never tested
+for real and could not be capped on spend, so they were removed.
 
 ## The idea
 
@@ -39,8 +40,9 @@ Autonomy without guardrails produces fast garbage. Asimov pairs the two:
   agent's prompt, so it starts on the current sprint before you type
   anything, without spending a turn reading the file.
 - **Quality gate** -- a pre-commit hook that blocks any commit that is not
-  formatted, lint-clean and 100% covered. The agent cannot ship unchecked
-  code; it has to fix it.
+  formatted, lint-clean and 100% covered, so the agent has to fix the code.
+  A hook can be skipped (`git commit --no-verify`), so build mode also runs
+  the gate itself on the committed code before a milestone counts.
 - **Stop rules** -- in build mode, caps on runs, hours, spend and stalls,
   so an unattended build always ends and says why.
 
@@ -52,8 +54,10 @@ curl -fsSL $ASIMOV/mollendorff-ai/asimov/main/install.sh | bash
 ```
 
 The installer downloads the latest tagged release and checks every file
-against the release's `SHA256SUMS` before installing anything. Or from a
-clone:
+against the release's `SHA256SUMS` before installing anything. Those
+checksums are published in the same release as the files, so they catch a
+corrupted or truncated download, not a compromised release or GitHub
+account. Releases are not signed. Or from a clone:
 
 ```bash
 git clone https://github.com/mollendorff-ai/asimov.git
@@ -158,17 +162,29 @@ shows the phase, the spend against the cap and the milestones released.
 5. **Build** -- for each project in turn, the agent runs headless on the
    current milestone: tests from the acceptance criteria first, commits
    through the quality gate, and marks the milestone released when done.
-   Asimov then checks README and docs links with `ref check-links` (broken
-   links send it back) and moves to the next milestone from the plan.
+   Asimov then runs the quality gate itself on what HEAD holds, since an
+   agent can commit past the hook, and checks README and docs links with
+   `ref check-links`. Either failure sends the milestone back to the agent
+   with the output; otherwise Asimov moves to the next milestone from the
+   plan.
 
 A build never runs open-ended. It stops, says why, and `asimov resume`
 continues, when any of these is hit:
 
 - `--max-loops` agent runs for one project (default 40)
 - `--max-hours` per build session (default 8)
-- `--max-usd` total spend (Claude only, also passed as `--max-budget-usd`)
-- `--stall` runs in a row with no new commit (default 3)
+- `--max-usd` total spend, planning run included (also passed to each run
+  as `--max-budget-usd`)
+- `--stall` runs in a row with no new commit, or that many quality gate
+  failures in a row on the committed code (default 3)
 - the agent writes `BLOCKED.md` saying what it needs
+
+After you approve the plan and before the first build run, Asimov checks
+that the quality gate's tools for each project's stack are installed (for
+Python: `ruff`, `pytest`, `pytest-cov`, and so on). Every commit goes
+through the gate, so a missing tool would stop the build at its first
+commit. If one is missing, Asimov names it with the install command, and
+`asimov resume` continues once it is installed.
 
 Build mode needs `build.sandbox: true` in `~/.asimov/config.yaml`, set
 once, on purpose. It uses lighter defaults than interactive mode (effort
@@ -270,7 +286,9 @@ fails. Run outside a git repository, the hook checks the current folder.
 | Flutter | `dart format` | `dart analyze` | `flutter test` 100% |
 
 The hook carries a notice telling AI agents not to bypass it. If checks
-fail, the agent has to fix the code. The hook lives in `.git/hooks/`, so
+fail, the agent has to fix the code. In interactive mode that notice is all
+that stops an agent from committing with `--no-verify`; build mode re-runs
+the gate itself before a milestone counts. The hook lives in `.git/hooks/`, so
 run `asimov init` or `asimov migrate` in each clone, and `asimov migrate`
 after `asimov update` to refresh it.
 
