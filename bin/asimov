@@ -3,7 +3,7 @@
 # Personal tool, built for sandboxed environments. Claude Code, Gemini CLI, Codex CLI.
 set -euo pipefail
 
-ASIMOV_VERSION="3.2.0"
+ASIMOV_VERSION="3.2.1"
 ASIMOV_REPO="mollendorff-ai/asimov"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"

@@ -10,8 +10,8 @@ current:
     - "Collect what goes wrong in those runs and fix the top items"
 
 previous:
-  version: "3.2.0"
-  title: "quality gate checks the staged snapshot"
+  version: "3.2.1"
+  title: "scaffold records the project type, no interactive advice"
 
 backlog:
   - version: "3.4.0"
