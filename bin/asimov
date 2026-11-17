@@ -420,6 +420,39 @@ stack_to_type() {
 
 # ─── Migrate ─────────────────────────────────────────────────────────────
 
+# SHA-256 of every earlier version of a protocol file that asimov has shipped
+# (the current version is read from the data dir). A project copy that matches
+# one of these was never edited, so migrate may replace it. Add the hash of the
+# old file here whenever a protocol changes.
+protocol_old_hashes() {
+    case "$1" in
+        freshness.json) echo 7ef3b77bdf63711dd89487d40a3d662aed63bc1817aec7a8fe62c0bca135ab10 ;;
+        sprint.json)    echo 21223217d54c38146d07fa2af728122d3105a627f22e029e2175d4cc56d7b9ad ;;
+    esac
+}
+
+# Bring a project's protocol file up to the shipped version: replace an old
+# shipped copy, keep one that was edited and show how it differs.
+# Prints what it did. Returns 0 if it replaced the file, 2 if it kept an edited
+# one (and said so), 1 if there was nothing to do.
+refresh_protocol() {
+    local f="$1" mine=".asimov/$1" shipped="${DATA_DIR}/protocols/$1" h old
+    [ -f "$mine" ] && [ -f "$shipped" ] || return 1
+    cmp -s "$mine" "$shipped" && return 1
+    h="$(sha256_of "$mine")"
+    for old in $(protocol_old_hashes "$f"); do
+        if [ "$h" = "$old" ]; then
+            cp "$shipped" "$mine"
+            echo "Refreshed .asimov/${f} (it was an older shipped version)"
+            return 0
+        fi
+    done
+    echo "Kept .asimov/${f}: it differs from the shipped version and is not an old one, so it looks edited."
+    echo "  Differences (< yours, > shipped); copy the shipped file over yours to take it:"
+    diff <(jq -S . "$mine" 2>/dev/null || cat "$mine") <(jq -S . "$shipped") | head -40 | sed 's/^/    /' || true
+    return 2
+}
+
 cmd_migrate() {
     if [ ! -d ".asimov" ]; then
         echo "No .asimov/ directory found. Nothing to migrate." >&2
@@ -491,6 +524,13 @@ cmd_migrate() {
             echo "Added .asimov/${f}"
             changed=1
         fi
+    done
+
+    # Refresh protocols that are an older shipped version; keep edited ones
+    local rc
+    for f in "${ASIMOV_PROTOCOLS[@]}"; do
+        refresh_protocol "$f" && rc=0 || rc=$?
+        [ "$rc" -eq 1 ] || changed=1
     done
 
     # Update pre-commit hook if git repo

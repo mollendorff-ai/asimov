@@ -242,6 +242,11 @@ run any command your user can. Sandbox only.
 | `sprint.json` | Status `autonomous`: work until deliverables are done |
 | `coding-standards.json` | Readable code, tests as docs, zero warnings |
 
+After `asimov update`, run `asimov migrate` in each project to bring its
+protocol files up to date. A file that is an older version Asimov shipped
+is replaced. A file you edited is kept, and migrate shows how it differs
+from the shipped one so you can merge by hand.
+
 ## Quality gate
 
 The pre-commit hook detects the project language by marker file. For
