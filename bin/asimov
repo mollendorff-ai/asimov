@@ -3,7 +3,7 @@
 # Personal tool, built for sandboxed environments. Claude Code, Gemini CLI, Codex CLI.
 set -euo pipefail
 
-ASIMOV_VERSION="3.5.0"
+ASIMOV_VERSION="3.5.1"
 ASIMOV_REPO="mollendorff-ai/asimov"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
@@ -481,6 +481,11 @@ refresh_protocol() {
     local f="$1" mine=".asimov/$1" shipped="${DATA_DIR}/protocols/$1" h old
     [ -f "$mine" ] && [ -f "$shipped" ] || return 1
     cmp -s "$mine" "$shipped" && return 1
+    # Same JSON with different whitespace (a missing final newline, say) is
+    # not an edit: leave the file alone and say nothing
+    local norm
+    norm="$(jq -S . "$mine" 2>/dev/null)" || norm=""
+    [ -n "$norm" ] && [ "$norm" = "$(jq -S . "$shipped")" ] && return 1
     h="$(sha256_of "$mine")"
     for old in $(protocol_old_hashes "$f"); do
         if [ "$h" = "$old" ]; then
@@ -582,11 +587,15 @@ cmd_migrate() {
         [ "$rc" -eq 1 ] || changed=1
     done
 
-    # Update pre-commit hook if git repo
-    if [ -d .git ] && [ -f "${DATA_DIR}/hooks/pre-commit" ]; then
+    # Install or update the pre-commit hook in a git repo, only when it differs
+    if [ -d .git ] && [ -f "${DATA_DIR}/hooks/pre-commit" ] \
+        && ! cmp -s "${DATA_DIR}/hooks/pre-commit" .git/hooks/pre-commit; then
+        local hook_verb="Updated"
+        [ -e .git/hooks/pre-commit ] || hook_verb="Installed"
+        mkdir -p .git/hooks
         cp "${DATA_DIR}/hooks/pre-commit" .git/hooks/pre-commit
         chmod +x .git/hooks/pre-commit
-        echo "Updated pre-commit hook"
+        echo "${hook_verb} pre-commit hook"
         changed=1
     fi
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.5.1
+
+- `asimov migrate` says only what it changed. In a git repo it used to
+  print "Updated pre-commit hook" and "Migration complete" on every run,
+  even when the hook was already current; it now copies the hook, and says
+  so, only when it is missing or differs from the shipped one, and
+  otherwise reports "Already up to date." (The tests never ran migrate in
+  a git repo, which is why this was missed.)
+- `asimov migrate` no longer calls a protocol file "edited" when it holds
+  the same JSON as the shipped one and differs only in whitespace, such as
+  a missing final newline. It leaves that file alone and says nothing.
+  A file whose content differs is still kept and flagged, with the
+  differences shown.
+
 ## 3.5.0
 
 - `asimov migrate` no longer deletes the files and folders that asimov 1.x
