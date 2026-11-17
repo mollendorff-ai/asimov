@@ -16,7 +16,11 @@ setup_file() {
         [ -d "$dir" ] || continue
         for f in "$dir"/*; do
             name="${f##*/}"
-            case "$name" in claude|gemini|codex|ref|pandoc) continue ;; esac
+            case "$name" in
+                claude|gemini|codex|ref|pandoc) continue ;;
+                # the quality gate's tools: present only as the mocks below
+                cargo|cargo-llvm-cov|ruff|python|npm|go|gofumpt|golangci-lint|go-test-coverage|flutter|lcov) continue ;;
+            esac
             [ -x "$f" ] && [ ! -e "${safe}/${name}" ] && ln -s "$f" "${safe}/${name}"
         done
     done
@@ -41,6 +45,7 @@ setup() {
     _mock_agent claude
     _mock_ref
     _mock_pandoc
+    _mock_gate_tools
     _plan_one_project
 
     WORK="${TEST_TMPDIR}/work"
@@ -51,6 +56,16 @@ setup() {
 
 teardown() {
     teardown_tmpdir
+}
+
+# Every tool the quality gate checks for, installed and working. A test makes
+# one "missing" with rm "${MOCK_DIR}/<tool>"; none of them exist on the safe PATH.
+_mock_gate_tools() {
+    local t
+    for t in cargo cargo-llvm-cov ruff python npm go gofumpt golangci-lint go-test-coverage flutter lcov; do
+        printf '#!/usr/bin/env bash\nexit 0\n' > "${MOCK_DIR}/${t}"
+        chmod +x "${MOCK_DIR}/${t}"
+    done
 }
 
 # Agent mock: records args and env; in .asimov-build writes the plan
@@ -275,17 +290,213 @@ EOF
     [[ "$output" == *"(--max-usd)"* ]]
 }
 
-@test "plan uses gemini -p and codex exec when chosen" {
+# ─── Claude only ────────────────────────────────────────────────────────
+
+@test "build --ai gemini is refused: build mode runs Claude only" {
     _mock_agent gemini
-    _mock_agent codex
     run "$ASIMOV_BIN" build --ai gemini --dir g spec.md
-    [ "$status" -eq 0 ]
-    grep -q -- '---call gemini' "$ARGS_LOG"
-    grep -qx -- '--approval-mode=yolo' "$ARGS_LOG"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"build mode runs Claude only"* ]]
+    [[ "$output" == *"'gemini'"* ]]
+    [ ! -d g/.asimov-build ]
+    [ ! -f "$ARGS_LOG" ]
+}
+
+@test "build --ai codex is refused: build mode runs Claude only" {
+    _mock_agent codex
     run "$ASIMOV_BIN" build --ai codex --dir c spec.md
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"build mode runs Claude only"* ]]
+    [ ! -d c/.asimov-build ]
+    [ ! -f "$ARGS_LOG" ]
+}
+
+@test "build.default_ai set to another agent is refused and named" {
+    printf 'build:\n  sandbox: true\n  default_ai: codex\n' > "$HOME/.asimov/config.yaml"
+    run "$ASIMOV_BIN" build spec.md
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"'codex'"* ]]
+}
+
+@test "the interactive default agent does not decide which agent builds" {
+    _mock_agent gemini
+    printf 'launch:\n  default_ai: gemini\nbuild:\n  sandbox: true\n' > "$HOME/.asimov/config.yaml"
+    run "$ASIMOV_BIN" build spec.md
     [ "$status" -eq 0 ]
-    grep -qx -- 'exec' "$ARGS_LOG"
-    grep -qx -- '--skip-git-repo-check' "$ARGS_LOG"
+    grep -q -- '---call claude' "$ARGS_LOG"
+    ! grep -q -- '---call gemini' "$ARGS_LOG"
+}
+
+@test "resume refuses a build started with another agent and changes nothing" {
+    run "$ASIMOV_BIN" build spec.md
+    yq -i '.ai = "gemini" | .phase = "stopped"' .asimov-build/state.yaml
+    before="$(cat .asimov-build/state.yaml)"
+    run "$ASIMOV_BIN" resume --max-loops 9
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"build mode runs Claude only"* ]]
+    [[ "$output" == *"'gemini'"* ]]
+    [ "$(cat .asimov-build/state.yaml)" = "$before" ]
+}
+
+@test "scaffold writes no Gemini settings" {
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ -f todo-api/.mcp.json ]
+    [ ! -e todo-api/.gemini ]
+}
+
+@test "build --help says Claude is the only agent and counts planning in --max-usd" {
+    run "$ASIMOV_BIN" build --help
+    [[ "$output" == *"claude (the only agent build mode runs"* ]]
+    [[ "$output" != *"gemini"* ]]
+    [[ "$output" == *"planning included"* ]]
+}
+
+# ─── Quality-gate preflight ─────────────────────────────────────────────
+
+_plan_stack() {
+    cat > "$MOCK_PLAN" << EOF
+projects:
+  - name: demo
+    description: "Demo."
+    stack: [$1]
+    milestones:
+      - {version: "0.1.0", title: "First", deliverables: ["x"], acceptance: ["y"]}
+EOF
+}
+
+# The agent calls so far: the plan is one, every build run is another
+_agent_calls() { grep -c -- '---call claude' "$ARGS_LOG" || true; }
+
+@test "preflight stops before any paid run when the Rust coverage tool is missing" {
+    rm "${MOCK_DIR}/cargo-llvm-cov"
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the quality gate needs tools that are not installed"* ]]
+    [[ "$output" == *"todo-api (rust): cargo-llvm-cov"* ]]
+    [[ "$output" == *"cargo install cargo-llvm-cov"* ]]
+    [[ "$output" == *"asimov resume"* ]]
+    [ ! -d todo-api ]
+    [ "$(_agent_calls)" -eq 1 ]
+    [ "$(yq -r .phase .asimov-build/state.yaml)" = "approved" ]
+}
+
+@test "resume continues once the missing tool is installed" {
+    rm "${MOCK_DIR}/cargo-llvm-cov"
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$status" -eq 1 ]
+    _mock_gate_tools
+    run "$ASIMOV_BIN" resume --max-loops 0
+    [ "$status" -eq 2 ]
+    [ -d todo-api/.git ]
+    [[ "$output" != *"not installed"* ]]
+}
+
+@test "preflight also guards build --yes" {
+    rm "${MOCK_DIR}/cargo-llvm-cov"
+    run "$ASIMOV_BIN" build --yes spec.md
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"cargo-llvm-cov"* ]]
+    [ ! -d todo-api ]
+    [ "$(_agent_calls)" -eq 1 ]
+}
+
+@test "preflight names a missing Rust component" {
+    printf '#!/usr/bin/env bash\ncase "$*" in "clippy --version") exit 1 ;; esac\nexit 0\n' > "${MOCK_DIR}/cargo"
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"clippy"* ]]
+    [[ "$output" == *"rustup component add clippy"* ]]
+    [[ "$output" != *"rustfmt"* ]]
+}
+
+@test "preflight lists every missing Python tool at once" {
+    _plan_stack "python, pytest"
+    rm "${MOCK_DIR}/ruff"
+    printf '#!/usr/bin/env bash\ncase "$*" in *pytest_cov*) exit 1 ;; esac\nexit 0\n' > "${MOCK_DIR}/python"
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"demo (python): ruff"* ]]
+    [[ "$output" == *"pip install ruff"* ]]
+    [[ "$output" == *"demo (python): pytest-cov (for python)"* ]]
+    [[ "$output" != *"demo (python): pytest (for python)"* ]]
+}
+
+@test "preflight finds python without pytest" {
+    _plan_stack "Python"
+    printf '#!/usr/bin/env bash\ncase "$*" in "-c import pytest") exit 1 ;; esac\nexit 0\n' > "${MOCK_DIR}/python"
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"pytest (for python)"* ]]
+}
+
+@test "preflight checks each Go tool on its own" {
+    _plan_stack "go"
+    rm "${MOCK_DIR}/golangci-lint"
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"demo (go): golangci-lint"* ]]
+    [[ "$output" != *"gofumpt"* ]]
+    [[ "$output" != *"go-test-coverage"* ]]
+}
+
+@test "preflight checks Flutter and lcov" {
+    _plan_stack "flutter"
+    rm "${MOCK_DIR}/lcov"
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"demo (flutter): lcov"* ]]
+}
+
+@test "preflight needs only npm for Node" {
+    _plan_stack "typescript"
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$status" -eq 2 ]
+    rm "${MOCK_DIR}/npm"
+    run "$ASIMOV_BIN" build --dir other spec.md
+    run "$ASIMOV_BIN" approve other --max-loops 0
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"demo (node): npm"* ]]
+}
+
+@test "preflight checks every language a stack names" {
+    _plan_stack "rust, python"
+    rm "${MOCK_DIR}/cargo-llvm-cov" "${MOCK_DIR}/ruff"
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"demo (rust): cargo-llvm-cov"* ]]
+    [[ "$output" == *"demo (python): ruff"* ]]
+}
+
+@test "preflight asks nothing for a stack with no known language" {
+    _plan_stack "cobol, jcl"
+    for t in cargo cargo-llvm-cov ruff python npm go gofumpt golangci-lint go-test-coverage flutter lcov; do
+        rm -f "${MOCK_DIR}/${t}"
+    done
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$status" -eq 2 ]
+    [[ "$output" != *"not installed"* ]]
+}
+
+@test "preflight names the project in a two-project plan" {
+    _plan_two_projects
+    rm "${MOCK_DIR}/gofumpt"
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"todo-cli (go): gofumpt"* ]]
+    [[ "$output" != *"todo-api"* ]]
+    [ ! -d todo-api ]
 }
 
 @test "an invalid plan stops the build and names the problem" {

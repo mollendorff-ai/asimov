@@ -7,11 +7,11 @@ current:
   title: "build mode hardening"
   status: pending
   deliverables:
-    - "Preflight: before the first paid run, check the tools the quality gate needs for each project's stack and stop with the install hint if one is missing"
     - "Build mode re-runs the quality gate itself before a milestone counts, since an agent can skip the pre-commit hook with git commit --no-verify (today it is only told not to); needs a mock-agent test"
-    - "Remove Gemini CLI and Codex CLI from build mode: never run for real, no spend cap, no subscriptions to test with. Interactive launch keeps them, labelled untested"
-    - "Use one commit email in the build scaffold (history is already unified by .mailmap)"
-    - "State in the README and SECURITY.md that SHA256SUMS only catch corruption, not tampering; signing waits until there is a key to manage"
+    # Done on this branch, not yet released: gate-tool preflight before the first
+    # paid run; Gemini CLI and Codex CLI removed from build mode; the README and
+    # SECURITY.md note that SHA256SUMS only catch corruption. Dropped: "one commit
+    # email in the build scaffold" - the real build's 11 commits all had one author.
 
 previous:
   version: "3.3.0"

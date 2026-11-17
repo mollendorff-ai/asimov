@@ -10,11 +10,14 @@ the owner to approve the plan, then creates the project folders and git
 repos and has an AI coding CLI build everything, unattended, until every
 milestone is released or a stop rule fires.
 
-Asimov stays a conductor, not an agent. The agent is still Claude Code,
-Gemini CLI or Codex CLI. Asimov adds spec ingestion, a plan approval stop,
-scaffolding, a headless loop around the existing sprint protocol, and stop
-rules. The pre-commit quality gate is what keeps the loop from shipping bad
-code.
+Asimov stays a conductor, not an agent. The agent is Claude Code. (This
+design first allowed Gemini CLI and Codex CLI too. Since 3.4.0 build mode
+runs Claude only: their build runs were never run for real, had no way to
+cap spend, and could not be tested without subscriptions. They remain
+available for interactive use.) Asimov adds spec ingestion, a plan approval
+stop, scaffolding, a headless loop around the existing sprint protocol, and
+stop rules. The pre-commit quality gate is what keeps the loop from
+shipping bad code.
 
 The two modes:
 
@@ -33,8 +36,9 @@ asimov build --yes <spec>...       skip the approval stop (full autonomy)
 Options:
 
 - `--dir <path>` -- build folder (default: current folder).
-- `--ai <claude|gemini|codex>` -- agent (default: `build.default_ai`, then
-  `launch.default_ai`).
+- `--ai claude` -- the agent; Claude is the only one build mode runs
+  (default: `build.default_ai`, then `claude`; `launch.default_ai` is the
+  interactive choice and does not apply).
 - `--max-loops <n>` -- agent runs per project (default 40).
 - `--max-hours <h>` -- wall-clock limit for the whole build (default 8).
 - `--max-usd <amount>` -- spending cap; Claude only, passed as
@@ -120,7 +124,18 @@ needed, then runs `asimov approve`. `--yes` skips this stop.
 A wrong plan wastes hours; a wrong line of code is caught by the gate. This
 is the one stop worth keeping.
 
-### 5. Scaffold
+### 5. Gate preflight and scaffold
+
+Once the plan is approved, and before anything is built, Asimov checks that
+the quality gate can run for every project's stack. The plan's stack names
+the languages (Python, Rust, Node, Go, Flutter; a stack can name several),
+and for each Asimov checks the tools `hooks/pre-commit` needs: for Python,
+`ruff`, `pytest` and `pytest-cov` importable by `python`; for Rust, `cargo`,
+rustfmt, clippy and `cargo-llvm-cov`; for Go, `gofumpt`, `golangci-lint` and
+`go-test-coverage`; for Flutter, `flutter` and `lcov`; for Node, `npm`. A
+missing tool stops the build with its install command, and `asimov resume`
+continues. Every commit goes through the gate, so without this the first
+paid run would end at its first commit.
 
 For each project, in plan order: create the folder, `git init`,
 `asimov init`, write `project.yaml` and `roadmap.yaml` from the plan (first
@@ -144,12 +159,10 @@ project, a loop:
    left, the project is done.
 3. Check stop rules (below). Record the run in `state.yaml` and `logs/`.
 
-Headless commands per agent:
-
-- Claude: `claude -p <prompt>` plus launch args, `--append-system-prompt`,
-  and `--max-budget-usd` when a cap is set.
-- Gemini: `gemini -p <protocols + prompt>` plus launch args (to verify).
-- Codex: `codex exec <protocols + prompt>` plus launch args (to verify).
+Headless command: `claude -p <prompt>` plus launch args,
+`--append-system-prompt`, `--output-format json` (the run's cost is read
+from it) and `--max-budget-usd` when a cap is set. The planning run uses
+the same flags, so its cost counts toward `--max-usd` too.
 
 ### 7. Release check (optional)
 
@@ -232,10 +245,10 @@ record arguments and write scripted outputs.
 
 ## Decisions made during implementation
 
-- Headless commands: `claude -p`, `gemini -p`, and
-  `codex exec --skip-git-repo-check` (the plan runs outside a git repo).
-- Build mode stays in `bin/asimov` (about 1,350 lines), so install and
-  update keep shipping one script.
+- Headless command: `claude -p`. (3.0 to 3.3 also had `gemini -p` and
+  `codex exec --skip-git-repo-check`; removed in 3.4.0, see the Summary.)
+- Build mode stays in `bin/asimov`, so install and update keep shipping one
+  script. Splitting it into modules was considered and dropped.
 - The next milestone always comes from `plan.yaml`, not from the agent's
   edits to the roadmap; an agent that moves the milestone itself is
   treated as having released it.

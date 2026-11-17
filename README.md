@@ -22,9 +22,10 @@ Two modes:
 > assistance.
 
 Status: personal, no stability promises. Its author uses interactive mode
-in a sandbox. Build mode is new in v3.0.0: tested with mock agents and one
-small real build with Claude (3 milestones, 3 runs, $0.84); Gemini and
-Codex build runs are tested with mocks only.
+in a sandbox. Build mode is new in v3.0.0 and runs Claude only: it is
+tested with mock agents and with small real builds with Claude. Gemini CLI
+and Codex CLI are for interactive use; their build runs were never tested
+for real and could not be capped on spend, so they were removed.
 
 ## The idea
 
@@ -52,8 +53,10 @@ curl -fsSL $ASIMOV/mollendorff-ai/asimov/main/install.sh | bash
 ```
 
 The installer downloads the latest tagged release and checks every file
-against the release's `SHA256SUMS` before installing anything. Or from a
-clone:
+against the release's `SHA256SUMS` before installing anything. Those
+checksums are published in the same release as the files, so they catch a
+corrupted or truncated download, not a compromised release or GitHub
+account. Releases are not signed. Or from a clone:
 
 ```bash
 git clone https://github.com/mollendorff-ai/asimov.git
@@ -166,9 +169,17 @@ continues, when any of these is hit:
 
 - `--max-loops` agent runs for one project (default 40)
 - `--max-hours` per build session (default 8)
-- `--max-usd` total spend (Claude only, also passed as `--max-budget-usd`)
+- `--max-usd` total spend, planning run included (also passed to each run
+  as `--max-budget-usd`)
 - `--stall` runs in a row with no new commit (default 3)
 - the agent writes `BLOCKED.md` saying what it needs
+
+After you approve the plan and before the first build run, Asimov checks
+that the quality gate's tools for each project's stack are installed (for
+Python: `ruff`, `pytest`, `pytest-cov`, and so on). Every commit goes
+through the gate, so a missing tool would stop the build at its first
+commit. If one is missing, Asimov names it with the install command, and
+`asimov resume` continues once it is installed.
 
 Build mode needs `build.sandbox: true` in `~/.asimov/config.yaml`, set
 once, on purpose. It uses lighter defaults than interactive mode (effort
