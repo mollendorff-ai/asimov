@@ -355,6 +355,50 @@ EOF
     [ "$(yq -r .phase .asimov-build/state.yaml)" = "stopped" ]
 }
 
+@test "scaffold records the project type from the plan's stack" {
+    _plan_two_projects
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$(yq -r .identity.type todo-api/.asimov/project.yaml)" = "rust" ]
+    [ "$(yq -r .identity.type todo-cli/.asimov/project.yaml)" = "go" ]
+}
+
+@test "scaffold finds the language anywhere in the stack, in any case" {
+    cat > "$MOCK_PLAN" << 'EOF'
+projects:
+  - name: wordfreq
+    description: "Counts words."
+    stack: [Make, Python, pytest, ruff]
+    milestones:
+      - {version: "0.1.0", title: "Count", deliverables: ["count"], acceptance: ["tests pass"]}
+EOF
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$(yq -r .identity.type wordfreq/.asimov/project.yaml)" = "python" ]
+}
+
+@test "scaffold keeps type generic when the stack names no known language" {
+    cat > "$MOCK_PLAN" << 'EOF'
+projects:
+  - name: legacy
+    description: "Old system."
+    stack: [cobol, jcl]
+    milestones:
+      - {version: "0.1.0", title: "Port", deliverables: ["port"], acceptance: ["tests pass"]}
+EOF
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ "$(yq -r .identity.type legacy/.asimov/project.yaml)" = "generic" ]
+}
+
+@test "scaffold log has no interactive-mode advice" {
+    run "$ASIMOV_BIN" build spec.md
+    run "$ASIMOV_BIN" approve --max-loops 0
+    [ -f .asimov-build/logs/scaffold-todo-api.log ]
+    grep -q "Initialized .asimov/ for 'todo-api' (rust)" .asimov-build/logs/scaffold-todo-api.log
+    ! grep -q "Next:" .asimov-build/logs/scaffold-todo-api.log
+}
+
 @test "build --yes scaffolds without stopping" {
     run "$ASIMOV_BIN" build --yes --max-loops 0 spec.md
     [ "$status" -eq 2 ]
