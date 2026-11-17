@@ -18,8 +18,7 @@ backlog:
     title: "CI and supply-chain hardening"
     status: pending
     deliverables:
-      - "Enforce the quality gate in CI as well, since git commit --no-verify skips the pre-commit hook"
-      - "Pin yq and the shellcheck action to exact versions"
+      - "Build mode re-runs the quality gate itself before a milestone counts, since an agent can skip the pre-commit hook with git commit --no-verify (today it is only told not to); needs a mock-agent test"
       - "Use one commit email across the history and in the build scaffold"
       - "Sign releases, or state in the README and SECURITY.md that SHA256SUMS only catch corruption, not tampering"
   - version: "3.4.0"
