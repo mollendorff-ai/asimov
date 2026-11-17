@@ -7,6 +7,10 @@ HOOK="${PROJECT_ROOT}/hooks/pre-commit"
 setup() {
     setup_tmpdir
     setup_project "hooktest"
+    # Keep git from finding a repository above the test folder
+    export GIT_CEILING_DIRECTORIES="$TEST_TMPDIR"
+    export TMPDIR="${TEST_TMPDIR}/tmp"
+    mkdir -p "$TMPDIR"
 }
 
 teardown() {
@@ -226,4 +230,138 @@ EOF
 
 @test "pre-commit header does not claim an organizational mandate" {
     ! grep -q "organizational security requirements" "$HOOK"
+}
+
+# ─── Staged snapshot ───────────────────────────────────────────────────
+
+# python mock: the coverage run fails unless module.py holds "good" in the
+# folder being checked; every other python call succeeds
+_mock_python_needs_module() {
+    mock_command "ruff" 0
+    cat > "${TEST_TMPDIR}/mocks/python" << 'EOF'
+#!/bin/bash
+case "$*" in
+    "-m pytest"*) grep -qx good module.py 2>/dev/null || exit 1 ;;
+esac
+exit 0
+EOF
+    chmod +x "${TEST_TMPDIR}/mocks/python"
+}
+
+@test "pre-commit checks the staged snapshot, not untracked files" {
+    git init -q
+    touch pyproject.toml
+    _mock_python_tools
+    run "$HOOK"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Checking the staged snapshot"* ]]
+    [[ "$output" != *"PYTHON QUALITY CHECKS"* ]]
+    git add pyproject.toml
+    run "$HOOK"
+    [[ "$output" == *"PYTHON QUALITY CHECKS"* ]]
+}
+
+@test "pre-commit fails a commit whose staged files fail, even if the work tree passes" {
+    git init -q
+    touch pyproject.toml
+    echo good > module.py
+    _mock_python_needs_module
+    git add pyproject.toml
+    run "$HOOK"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"COVERAGE FAILED"* ]]
+    git add module.py
+    run "$HOOK"
+    [ "$status" -eq 0 ]
+}
+
+@test "pre-commit checks the staged version of a file, not its unstaged edits" {
+    git init -q
+    touch pyproject.toml
+    echo good > module.py
+    git add pyproject.toml module.py
+    echo bad > module.py
+    _mock_python_needs_module
+    run "$HOOK"
+    [ "$status" -eq 0 ]
+    echo good > module.py
+    git add module.py
+    echo bad > module.py
+    git add module.py
+    echo good > module.py
+    run "$HOOK"
+    [ "$status" -ne 0 ]
+}
+
+@test "pre-commit leaves the work tree untouched and removes its snapshot" {
+    git init -q
+    touch pyproject.toml
+    echo good > module.py
+    git add pyproject.toml module.py
+    echo edited > module.py
+    echo draft > notes.txt
+    before="$(git status --porcelain; cat module.py notes.txt)"
+    _mock_python_tools
+    run "$HOOK"
+    [ "$status" -eq 0 ]
+    [ "$(git status --porcelain; cat module.py notes.txt)" = "$before" ]
+    [ -z "$(ls -A "$TMPDIR")" ]
+}
+
+@test "pre-commit removes its snapshot when a check fails" {
+    git init -q
+    touch pyproject.toml
+    git add pyproject.toml
+    _mock_python_needs_module
+    run "$HOOK"
+    [ "$status" -ne 0 ]
+    [ -z "$(ls -A "$TMPDIR")" ]
+}
+
+@test "pre-commit reuses installed dependencies that are never staged" {
+    git init -q
+    touch pyproject.toml
+    git add pyproject.toml
+    mkdir .venv
+    mock_command "ruff" 0
+    cat > "${TEST_TMPDIR}/mocks/python" << 'EOF'
+#!/bin/bash
+case "$*" in "-m pytest"*) [ -d .venv ] || exit 1 ;; esac
+exit 0
+EOF
+    chmod +x "${TEST_TMPDIR}/mocks/python"
+    run "$HOOK"
+    [ "$status" -eq 0 ]
+}
+
+@test "pre-commit points Rust builds at the project's target folder" {
+    git init -q
+    touch Cargo.toml
+    git add Cargo.toml
+    mock_command "cargo-llvm-cov" 0
+    cat > "${TEST_TMPDIR}/mocks/cargo" << EOF
+#!/bin/bash
+echo "\$CARGO_TARGET_DIR" > "${TEST_TMPDIR}/target.log"
+exit 0
+EOF
+    chmod +x "${TEST_TMPDIR}/mocks/cargo"
+    run "$HOOK"
+    [ "$status" -eq 0 ]
+    [ "$(cat "${TEST_TMPDIR}/target.log")" = "$(pwd -P)/target" ]
+}
+
+@test "pre-commit checks a partial commit's own index" {
+    git init -q
+    touch pyproject.toml
+    echo bad > module.py
+    git add pyproject.toml module.py
+    echo good > module.py
+    _mock_python_needs_module
+    # git commit module.py builds a temporary index and points GIT_INDEX_FILE at it
+    cp .git/index "${TEST_TMPDIR}/partial-index"
+    GIT_INDEX_FILE="${TEST_TMPDIR}/partial-index" git add module.py
+    GIT_INDEX_FILE="${TEST_TMPDIR}/partial-index" run "$HOOK"
+    [ "$status" -eq 0 ]
+    run "$HOOK"
+    [ "$status" -ne 0 ]
 }

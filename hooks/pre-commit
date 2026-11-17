@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # QUALITY GATE - Universal Auto-Detecting Pre-commit Hook
 # ═══════════════════════════════════════════════════════════════════════════════
-# Version: 2.1.0
+# Version: 2.2.0
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # ╔═══════════════════════════════════════════════════════════════════════════╗
@@ -37,6 +37,31 @@ echo "════════════════════════�
 echo "  PRE-COMMIT QUALITY GATE"
 echo "════════════════════════════════════════════════════════════════════════════"
 echo ""
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STAGED SNAPSHOT
+# ═══════════════════════════════════════════════════════════════════════════════
+# Check what this commit will contain, not the working tree: copy the staged
+# files (the index; git sets GIT_INDEX_FILE for partial commits) to a temporary
+# folder and run every check there. The working tree is never touched, so
+# uncommitted and untracked work is safe. Outside a git work tree (a manual
+# run), the current folder is checked as it is.
+if top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    snapshot="$(mktemp -d "${TMPDIR:-/tmp}/asimov-gate.XXXXXX")"
+    trap 'rm -rf "$snapshot"' EXIT
+    git -C "$top" checkout-index --all --prefix="${snapshot}/"
+    # Installed dependencies are never staged; reuse them from the work tree
+    for dep in node_modules .venv venv .dart_tool; do
+        if [ -e "${top}/${dep}" ] && [ ! -e "${snapshot}/${dep}" ]; then
+            ln -s "${top}/${dep}" "${snapshot}/${dep}"
+        fi
+    done
+    # Reuse the project's Rust build cache instead of building from scratch
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${top}/target}"
+    cd "$snapshot"
+    echo "Checking the staged snapshot (what this commit will contain)"
+    echo ""
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # RUST

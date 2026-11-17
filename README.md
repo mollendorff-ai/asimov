@@ -247,6 +247,15 @@ run any command your user can. Sandbox only.
 The pre-commit hook detects the project language by marker file. For
 Node, coverage is only enforced if your test config sets a 100% threshold.
 
+It checks the staged snapshot, what the commit will contain, not your
+working tree: it copies the staged files to a temporary folder and runs
+every check there, so a commit cannot pass because of files you have not
+staged. Your working tree is never touched. Installed dependencies
+(`node_modules`, `.venv`, `venv`, `.dart_tool`) are linked in from the
+working tree, and Rust builds reuse its `target/`. Anything else a check
+needs, such as a git-ignored `.env` file, has to be staged or the check
+fails. Run outside a git repository, the hook checks the current folder.
+
 | Language | Format | Lint | Coverage |
 | -------- | ------ | ---- | -------- |
 | Rust | `cargo fmt` | `clippy --pedantic` | `llvm-cov` 100% |
