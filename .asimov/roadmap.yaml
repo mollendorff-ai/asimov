@@ -7,9 +7,23 @@ current:
   status: pending
   deliverables:
     - "Collect what goes wrong in the first real build-mode runs and fix the top items"
+    - "Run a real build with Gemini CLI and with Codex CLI (tested with mocks only so far), in a sandbox with a low --max-usd cap"
 
 previous:
   version: "3.1.0"
   title: "status + config commands"
 
-backlog: []
+backlog:
+  - version: "3.3.0"
+    title: "CI and supply-chain hardening"
+    status: pending
+    deliverables:
+      - "Enforce the quality gate in CI as well, since git commit --no-verify skips the pre-commit hook"
+      - "Pin yq and the shellcheck action to exact versions"
+      - "Use one commit email across the history and in the build scaffold"
+      - "Sign releases, or state in the README and SECURITY.md that SHA256SUMS only catch corruption, not tampering"
+  - version: "3.4.0"
+    title: "split bin/asimov"
+    status: pending
+    deliverables:
+      - "Split bin/asimov (about 1,600 lines) into sourced modules before adding any new feature; the existing tests must pass unchanged"
