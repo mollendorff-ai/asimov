@@ -42,6 +42,29 @@ teardown() {
     [[ "$output" == *"pre-commit hook up to date"* ]]
 }
 
+@test "status is quiet about the format of a fresh project" {
+    git init -q .
+    run "$ASIMOV_BIN" init
+    run "$ASIMOV_BIN" status
+    [[ "$output" != *"format"* ]]
+}
+
+@test "status flags a project with no format version" {
+    git init -q .
+    run "$ASIMOV_BIN" init
+    yq -i 'del(.format)' .asimov/project.yaml
+    run "$ASIMOV_BIN" status
+    [[ "$output" == *".asimov/ format is old or unset (asimov migrate)"* ]]
+}
+
+@test "status flags a project made by a newer asimov" {
+    git init -q .
+    run "$ASIMOV_BIN" init
+    yq -i '.format = 7' .asimov/project.yaml
+    run "$ASIMOV_BIN" status
+    [[ "$output" == *"format 7 is newer than this asimov (asimov update)"* ]]
+}
+
 @test "status flags a missing protocol and an outdated hook" {
     git init -q .
     run "$ASIMOV_BIN" init

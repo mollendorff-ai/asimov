@@ -98,6 +98,7 @@ YAML
 @test "migrate leaves fully enriched project.yaml untouched" {
     mkdir -p .asimov
     cat > .asimov/project.yaml << 'YAML'
+format: 1
 identity:
   name: slimproj
   type: node
@@ -196,6 +197,7 @@ YAML
 @test "migrate reports up to date when nothing to do" {
     mkdir -p .asimov
     cat > .asimov/project.yaml << 'YAML'
+format: 1
 identity:
   name: cleanproj
   type: shell
@@ -297,4 +299,69 @@ _project_with_current_protocols() {
     [[ "$output" == *"Refreshed .asimov/freshness.json"* ]]
     run "$ASIMOV_BIN" migrate
     [[ "$output" != *"Refreshed"* ]]
+}
+
+# ─── Format version ─────────────────────────────────────────────────────
+
+_project_without_format() {
+    mkdir -p .asimov
+    printf 'identity:\n  name: old\n  type: shell\ndescription: "x"\nstack: []\nconventions: []\n' > .asimov/project.yaml
+    cp "${PROJECT_ROOT}/protocols/"*.json .asimov/
+}
+
+@test "migrate sets the format version on a project that has none" {
+    _project_without_format
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Set format 1 in project.yaml"* ]]
+    [ "$(yq -r .format .asimov/project.yaml)" = "1" ]
+}
+
+@test "migrate upgrades an older format version" {
+    _project_without_format
+    yq -i '.format = 0' .asimov/project.yaml
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Upgraded project.yaml format 0 -> 1"* ]]
+    [ "$(yq -r .format .asimov/project.yaml)" = "1" ]
+}
+
+@test "migrate leaves a current format version alone" {
+    _project_without_format
+    yq -i '.format = 1' .asimov/project.yaml
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" != *"format"* ]]
+    [ "$(yq -r .format .asimov/project.yaml)" = "1" ]
+}
+
+@test "migrate refuses a project with a newer format and changes nothing" {
+    _project_without_format
+    yq -i '.format = 99' .asimov/project.yaml
+    echo '{}' > .asimov/warmup.json
+    before="$(cat .asimov/project.yaml)"
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"newer than this asimov understands"* ]]
+    [[ "$output" == *"asimov update"* ]]
+    [ -f .asimov/warmup.json ]
+    [ "$(cat .asimov/project.yaml)" = "$before" ]
+}
+
+@test "migrate refuses a format that is not a whole number" {
+    _project_without_format
+    yq -i '.format = "two"' .asimov/project.yaml
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"must be a whole number"* ]]
+}
+
+@test "migrate sets the format version after the other upgrades, in one run" {
+    mkdir -p .asimov
+    printf 'identity:\n  name: bare\n  type: shell\n' > .asimov/project.yaml
+    run "$ASIMOV_BIN" migrate
+    [ "$status" -eq 0 ]
+    [ "$(yq -r .format .asimov/project.yaml)" = "1" ]
+    [ "$(yq -r '.stack | length' .asimov/project.yaml)" = "0" ]
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" == *"Already up to date."* ]]
 }

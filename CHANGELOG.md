@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.3.0
+
+- `asimov migrate` brings protocol files up to date. A project copy that is
+  an older version asimov shipped is replaced; one you edited is kept, with
+  its differences from the shipped file shown so you can merge by hand.
+  Before, migrate only copied a protocol when it was missing, so a project
+  kept its old rule text after `asimov update`. Run `asimov migrate` in
+  each project after updating.
+- `.asimov/project.yaml` records a `format` version, written by `init` and
+  set or raised by `migrate`. `migrate` refuses a project whose format is
+  newer than the installed asimov understands, and changes nothing;
+  `asimov status` flags a missing, old or newer format.
+- The current sprint is part of the agent's prompt, and asimov prints a
+  one-line sprint summary at launch. Claude no longer gets a separate
+  warmup turn followed by `--continue`: that turn cost a model call at
+  maximum effort on every launch, and a failure in it stopped the launch
+  before a session started. Gemini and Codex get the sprint in their first
+  message, as they got the protocols.
+
 ## 3.2.0
 
 - Quality gate: the pre-commit hook checks the staged snapshot (what the

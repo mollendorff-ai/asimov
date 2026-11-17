@@ -100,3 +100,61 @@ YAML
     [ "$status" -eq 0 ]
     [ "$output" = "" ]
 }
+
+# ─── current sprint ──────────────────────────────────────────────────────
+
+@test "build_system_prompt includes the current sprint from the roadmap" {
+    create_test_asimov_dir
+    cat > .asimov/roadmap.yaml << 'YAML'
+current:
+  version: "2.0.0"
+  title: "Ship it"
+  status: autonomous
+  deliverables:
+    - "first thing"
+    - "second thing"
+backlog:
+  - version: "2.1.0"
+    title: "later"
+YAML
+    run build_system_prompt
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r '.current_sprint.version')" = "2.0.0" ]
+    [ "$(echo "$output" | jq -r '.current_sprint.title')" = "Ship it" ]
+    [ "$(echo "$output" | jq -r '.current_sprint.status')" = "autonomous" ]
+    [ "$(echo "$output" | jq -r '.current_sprint.deliverables | length')" -eq 2 ]
+    [[ "$output" != *"later"* ]]
+}
+
+@test "build_system_prompt leaves out the sprint when the roadmap has no current milestone" {
+    create_test_asimov_dir
+    printf 'backlog: []\n' > .asimov/roadmap.yaml
+    run build_system_prompt
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq 'has("current_sprint")')" = "false" ]
+}
+
+@test "build_system_prompt leaves out the sprint when there is no roadmap" {
+    create_test_asimov_dir
+    rm .asimov/roadmap.yaml
+    run build_system_prompt
+    [ "$(echo "$output" | jq 'has("current_sprint")')" = "false" ]
+}
+
+@test "build_system_prompt gives the sprint alone when it is all there is" {
+    mkdir -p .asimov
+    printf 'current:\n  version: "0.1.0"\n  title: "Only this"\n' > .asimov/roadmap.yaml
+    run build_system_prompt
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r '.current_sprint.title')" = "Only this" ]
+}
+
+@test "sprint_summary prints one line, and nothing without a roadmap" {
+    create_test_asimov_dir
+    printf 'current:\n  version: "3.3.0"\n  title: "Upgrades"\n  status: pending\n  deliverables: [a, b, c]\n' > .asimov/roadmap.yaml
+    run sprint_summary
+    [ "$output" = "Sprint: 3.3.0 Upgrades [pending], 3 deliverable(s)" ]
+    rm .asimov/roadmap.yaml
+    run sprint_summary
+    [ "$output" = "" ]
+}

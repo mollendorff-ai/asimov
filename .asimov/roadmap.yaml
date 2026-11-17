@@ -3,28 +3,21 @@
 # Decided in the feature review of 2026-11-17. bin/asimov stays one script.
 
 current:
-  version: "3.3.0"
-  title: "upgrades reach existing projects"
+  version: "3.4.0"
+  title: "build mode hardening"
   status: pending
   deliverables:
-    - "asimov migrate refreshes protocol files: one that matches any version asimov has shipped is replaced with the current one; one the user edited is kept and reported with a diff"
-    - "A format version in .asimov/project.yaml, written by init and bumped by migrate, so migrate knows what it is upgrading from instead of guessing from which files exist"
-    - "Put the current sprint (from roadmap.yaml) in the system prompt and drop the separate warmup turn, which costs one extra model turn on every Claude launch"
+    - "Preflight: before the first paid run, check the tools the quality gate needs for each project's stack and stop with the install hint if one is missing"
+    - "Build mode re-runs the quality gate itself before a milestone counts, since an agent can skip the pre-commit hook with git commit --no-verify (today it is only told not to); needs a mock-agent test"
+    - "Remove Gemini CLI and Codex CLI from build mode: never run for real, no spend cap, no subscriptions to test with. Interactive launch keeps them, labelled untested"
+    - "Use one commit email in the build scaffold (history is already unified by .mailmap)"
+    - "State in the README and SECURITY.md that SHA256SUMS only catch corruption, not tampering; signing waits until there is a key to manage"
 
 previous:
-  version: "3.2.1"
-  title: "scaffold records the project type, no interactive advice"
+  version: "3.3.0"
+  title: "upgrades reach existing projects"
 
 backlog:
-  - version: "3.4.0"
-    title: "build mode hardening"
-    status: pending
-    deliverables:
-      - "Preflight: before the first paid run, check the tools the quality gate needs for each project's stack and stop with the install hint if one is missing"
-      - "Build mode re-runs the quality gate itself before a milestone counts, since an agent can skip the pre-commit hook with git commit --no-verify (today it is only told not to); needs a mock-agent test"
-      - "Remove Gemini CLI and Codex CLI from build mode: never run for real, no spend cap, no subscriptions to test with. Interactive launch keeps them, labelled untested"
-      - "Use one commit email in the build scaffold (history is already unified by .mailmap)"
-      - "State in the README and SECURITY.md that SHA256SUMS only catch corruption, not tampering; signing waits until there is a key to manage"
   - version: "3.5.0"
     title: "trim"
     status: pending
