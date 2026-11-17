@@ -196,5 +196,5 @@
 
 ## Pre-2.0
 
-Rust CLI archived at `mollendorff-ai/asimov-rust`.
-Tagged `v14.1.0-rust-final`.
+The earlier Rust CLI is kept privately and archived; it is not
+maintained or published here.
