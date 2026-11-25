@@ -605,7 +605,8 @@ stack_gate_types() {
 protocol_old_hashes() {
     case "$1" in
         freshness.json) echo 7ef3b77bdf63711dd89487d40a3d662aed63bc1817aec7a8fe62c0bca135ab10 ;;
-        sprint.json)    echo 21223217d54c38146d07fa2af728122d3105a627f22e029e2175d4cc56d7b9ad ;;
+        sprint.json)    echo 21223217d54c38146d07fa2af728122d3105a627f22e029e2175d4cc56d7b9ad \
+                             55ac9e17ada03bf8bb08fb18679c6d846816f7b95e5e730eba90845dc67c7ac8 ;;
     esac
 }
 

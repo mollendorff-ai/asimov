@@ -315,3 +315,13 @@ _hook_repo() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"is not a lane id; not checked"* ]]
 }
+
+# ─── Protocols ───────────────────────────────────────────────────────────
+
+@test "migrate refreshes the 3.5.1 sprint protocol, which does not mention lanes" {
+    cp "${PROJECT_ROOT}/test/fixtures/old-protocols/sprint-3.5.1.json" .asimov/sprint.json
+    run "$ASIMOV_BIN" migrate
+    [[ "$output" == *"Refreshed .asimov/sprint.json"* ]]
+    cmp -s .asimov/sprint.json "${PROJECT_ROOT}/protocols/sprint.json"
+    [[ "$(jq -r .rule .asimov/sprint.json)" == *"a project with lanes says in the lane rule who writes it"* ]]
+}

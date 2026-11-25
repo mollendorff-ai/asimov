@@ -20,6 +20,9 @@
   a file in `.asimov/roadmap/` that belongs to no lane.
 - The pre-commit hook (2.3.0) lists staged files outside the lane's paths
   when `ASIMOV_LANE` is set. It is a warning, never a failure.
+- The sprint protocol says that a project with lanes states in its lane
+  rule who writes `CHANGELOG.md`. `asimov migrate` refreshes the 3.5.1
+  copy of `sprint.json`.
 - A current sprint named by `id` with no `version` now reaches the prompt
   and the launch line.
 - `asimov migrate` reported a stray file in `.asimov/` only when its name
