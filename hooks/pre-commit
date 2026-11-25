@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # QUALITY GATE - Universal Auto-Detecting Pre-commit Hook
 # ═══════════════════════════════════════════════════════════════════════════════
-# Version: 2.2.0
+# Version: 2.3.0
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # ╔═══════════════════════════════════════════════════════════════════════════╗
@@ -61,6 +61,46 @@ if top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
     cd "$snapshot"
     echo "Checking the staged snapshot (what this commit will contain)"
     echo ""
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LANE (a warning, never a failure)
+# ═══════════════════════════════════════════════════════════════════════════════
+# A session launched in a lane (asimov --lane <id>, or ASIMOV_LANE) is told
+# which paths its lane owns (.asimov/project.yaml). Staged files outside those,
+# the shared paths and .asimov/roadmap/ are named here, so the session can move
+# the work to the lane that owns it. A pattern is a shell pattern whose *
+# matches across folders; one ending in / is everything under that folder.
+lane_matches() {
+    local path="$1" pat
+    while IFS= read -r pat; do
+        [ -n "$pat" ] || continue
+        case "$pat" in */) pat="${pat}*" ;; esac
+        # shellcheck disable=SC2053 # the pattern is meant as a glob
+        [[ "$path" == $pat ]] && return 0
+    done
+    return 1
+}
+if [ -n "${ASIMOV_LANE:-}" ] && [ -n "${top:-}" ] && [ -f .asimov/project.yaml ] \
+    && command -v yq >/dev/null 2>&1; then
+    if ! [[ "$ASIMOV_LANE" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+        echo "⚠️  LANE: ASIMOV_LANE='${ASIMOV_LANE}' is not a lane id; not checked"
+        echo ""
+    elif [ -n "$(yq -r "(.lanes // [])[] | select(.id == \"${ASIMOV_LANE}\") | .id" .asimov/project.yaml 2>/dev/null)" ]; then
+        lane_paths="$(yq -r "(.lanes[] | select(.id == \"${ASIMOV_LANE}\") | .owns // [])[], (.shared // [])[]" .asimov/project.yaml 2>/dev/null)"
+        lane_paths="${lane_paths}"$'\n'".asimov/roadmap/"
+        outside=""
+        while IFS= read -r staged; do
+            [ -n "$staged" ] || continue
+            lane_matches "$staged" <<< "$lane_paths" || outside="${outside}   ${staged}"$'\n'
+        done < <(git -C "$top" diff --cached --name-only)
+        if [ -n "$outside" ]; then
+            echo "⚠️  LANE ${ASIMOV_LANE}: these staged files are outside what the lane owns:"
+            printf '%s' "$outside"
+            echo "   If the work belongs to another lane, add it to that lane's backlog instead."
+            echo ""
+        fi
+    fi
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

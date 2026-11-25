@@ -1,5 +1,31 @@
 # Changelog
 
+## 3.6.0
+
+- Lanes, for several sessions working on one project at once. A project
+  lists its lanes in `.asimov/project.yaml` (`lanes:`, each with an `id`,
+  a `title`, the paths it `owns`, and `releases: true` on at most one), and
+  each lane has its own roadmap in `.asimov/roadmap/<id>.yaml`, with the
+  same schema as `roadmap.yaml`. `asimov --lane <id>` (or `ASIMOV_LANE`)
+  launches a session in one lane: its prompt carries that lane's current
+  sprint, what the lane owns, the other lanes, and the rule that work for
+  another lane goes in that lane's backlog. Only the releasing lane is told
+  to write `CHANGELOG.md`; the others add a file under
+  `changelog.fragments` when the project sets one. A project with lanes
+  will not launch without one, and lanes that are not valid (an id used
+  twice, an id that is not a plain name, two releasing lanes) stop the
+  launch and are named. A project without lanes works exactly as before.
+- `asimov status` lists every lane's sprint and backlog, and marks the
+  session's own. `asimov migrate` creates a missing lane roadmap and names
+  a file in `.asimov/roadmap/` that belongs to no lane.
+- The pre-commit hook (2.3.0) lists staged files outside the lane's paths
+  when `ASIMOV_LANE` is set. It is a warning, never a failure.
+- A current sprint named by `id` with no `version` now reaches the prompt
+  and the launch line.
+- `asimov migrate` reported a stray file in `.asimov/` only when its name
+  was not part of an expected one: a folder named `roadmap` passed because
+  `roadmap.yaml` is expected. Names are now matched whole.
+
 ## 3.5.1
 
 - `asimov migrate` says only what it changed. In a git repo it used to

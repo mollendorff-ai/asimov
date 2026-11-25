@@ -3,7 +3,7 @@
 # Personal tool, built for sandboxed environments. Claude Code, Gemini CLI, Codex CLI.
 set -euo pipefail
 
-ASIMOV_VERSION="3.5.1"
+ASIMOV_VERSION="3.6.0"
 ASIMOV_REPO="mollendorff-ai/asimov"
 ASIMOV_GLOBAL_DIR="${HOME}/.asimov"
 ASIMOV_GLOBAL_CONFIG="${ASIMOV_GLOBAL_DIR}/config.yaml"
@@ -78,6 +78,127 @@ cfg_env() {
     return 0
 }
 
+# ─── Lanes ───────────────────────────────────────────────────────────────
+#
+# A project worked on by several sessions at once can split its work into
+# lanes (project.yaml `lanes:`), each owning some paths and its own roadmap,
+# .asimov/roadmap/<id>.yaml, with the same schema as roadmap.yaml. A session
+# picks its lane with `asimov --lane <id>` or ASIMOV_LANE. With no lanes in
+# project.yaml, nothing here changes anything: the roadmap is roadmap.yaml.
+
+# Lane ids from project.yaml, one per line
+lane_ids() {
+    [ -f .asimov/project.yaml ] || return 0
+    yq -r '(.lanes // [])[] | .id // ""' .asimov/project.yaml 2>/dev/null
+    return 0
+}
+
+has_lanes() {
+    [ -n "$(lane_ids)" ]
+}
+
+# What is wrong with the lanes in project.yaml, one problem per line (none: ok)
+lane_problems() {
+    [ -f .asimov/project.yaml ] || return 0
+    local kind
+    kind="$(yq -r '.lanes | type' .asimov/project.yaml 2>/dev/null)"
+    case "$kind" in
+        '!!null') return 0 ;;
+        '!!seq') ;;
+        *) echo "'lanes' in project.yaml must be a list"; return 0 ;;
+    esac
+    local id seen="" n=0
+    while IFS= read -r id; do
+        n=$((n + 1))
+        if [ -z "$id" ]; then
+            echo "lane ${n} has no id"
+        elif ! [[ "$id" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+            echo "lane id '${id}' must be lowercase letters, digits, - or _"
+        elif [[ " ${seen} " == *" ${id} "* ]]; then
+            echo "lane id '${id}' is used twice"
+        fi
+        seen="${seen} ${id}"
+    done < <(yq -r '.lanes[] | .id // ""' .asimov/project.yaml 2>/dev/null)
+    local releasing
+    releasing="$(yq -r '[.lanes[] | select(.releases == true)] | length' .asimov/project.yaml 2>/dev/null)"
+    [ "${releasing:-0}" -le 1 ] || echo "${releasing} lanes say releases: true; at most one may"
+    return 0
+}
+
+# The roadmap file of the current lane, or roadmap.yaml with no lane
+roadmap_file() {
+    if [ -n "${ASIMOV_LANE:-}" ]; then
+        echo ".asimov/roadmap/${ASIMOV_LANE}.yaml"
+    else
+        echo ".asimov/roadmap.yaml"
+    fi
+}
+
+# Check ASIMOV_LANE against project.yaml before launching. Exits on a problem.
+require_lane() {
+    local problems ids
+    problems="$(lane_problems)"
+    if [ -n "$problems" ]; then
+        echo "Lanes in .asimov/project.yaml are not valid:" >&2
+        printf '  %s\n' "$problems" >&2
+        exit 1
+    fi
+    ids="$(lane_ids | tr '\n' ' ')"
+    ids="${ids% }"
+    if [ -z "$ids" ]; then
+        if [ -n "${ASIMOV_LANE:-}" ]; then
+            echo "--lane ${ASIMOV_LANE}: this project has no lanes (add 'lanes:' to .asimov/project.yaml)" >&2
+            exit 1
+        fi
+        return 0
+    fi
+    if [ -z "${ASIMOV_LANE:-}" ]; then
+        echo "This project works in lanes: ${ids}" >&2
+        echo "Choose one: asimov --lane <id>  (or set ASIMOV_LANE)" >&2
+        exit 1
+    fi
+    if [[ " ${ids} " != *" ${ASIMOV_LANE} "* ]]; then
+        echo "Unknown lane '${ASIMOV_LANE}'. Lanes: ${ids}" >&2
+        exit 1
+    fi
+    export ASIMOV_LANE
+}
+
+# The lane's part of the system prompt (JSON), or null with no lane
+lane_context() {
+    if [ -z "${ASIMOV_LANE:-}" ] || ! has_lanes; then
+        echo "null"
+        return 0
+    fi
+    yq -o=json '.' .asimov/project.yaml 2>/dev/null | jq -c --arg id "$ASIMOV_LANE" '
+        (.changelog.fragments // null) as $frag
+        | ((.shared // []) + [".asimov/roadmap/"]) as $shared
+        | (.lanes | map(select(.id == $id)) | first) as $me
+        | ($me.releases == true) as $rel
+        | ([.lanes[] | select(.releases == true) | .id] | first) as $releaser
+        | {
+            id: $id,
+            title: ($me.title // ""),
+            owns: ($me.owns // []),
+            shared: $shared,
+            roadmap: (".asimov/roadmap/" + $id + ".yaml"),
+            releases: $rel,
+            other_lanes: [.lanes[] | select(.id != $id)
+                | {id, title: (.title // ""), roadmap: (".asimov/roadmap/" + .id + ".yaml")}],
+            rule: ("You work in the \"" + $id + "\" lane only; other sessions work in the other lanes at the same time. "
+                + "Take work only from your lane'"'"'s roadmap (" + (".asimov/roadmap/" + $id + ".yaml") + "). "
+                + "Change only the paths your lane owns and the shared ones. "
+                + "Work you find that belongs to another lane is not yours to do: add it as an item at the end of that lane'"'"'s backlog, and say so. "
+                + (if $rel then "You are the lane that releases: only you bump the version and write CHANGELOG.md"
+                       + (if $frag then ", from the fragments in " + $frag else "" end) + ". "
+                   else "Do not bump the version, release, or edit CHANGELOG.md"
+                       + (if $releaser then " (the " + $releaser + " lane does)" else "" end)
+                       + (if $frag then "; add your change as a new file in " + $frag else "" end) + ". "
+                   end)
+                + "Before starting, fetch the main branch and read your roadmap there: it is the claim on the work.")
+          }'
+}
+
 # ─── Default global config ───────────────────────────────────────────────
 
 ensure_global_config() {
@@ -146,20 +267,25 @@ build_system_prompt() {
     [ -f .asimov/sprint.json ] && sprint=$(jq -r '.rule // empty' .asimov/sprint.json)
     [ -f .asimov/coding-standards.json ] && coding_standards=$(jq -r '.rule // empty' .asimov/coding-standards.json)
 
-    # The current sprint from the roadmap, so the agent starts on it without
-    # spending a turn reading the file (and keeps it through compaction)
-    local current_sprint="null"
-    if [ -f .asimov/roadmap.yaml ]; then
-        current_sprint="$(yq -o=json '.current // {}' .asimov/roadmap.yaml 2>/dev/null \
-            | jq -c '{version, title, status, deliverables} | if .version == null and .title == null then null else (.deliverables = ((.deliverables // [])[:12])) end' 2>/dev/null)" || true
+    # The current sprint from the roadmap (the lane's, in a lane), so the
+    # agent starts on it without spending a turn reading the file (and keeps
+    # it through compaction). A sprint named by id alone counts.
+    local current_sprint="null" roadmap lane
+    roadmap="$(roadmap_file)"
+    if [ -f "$roadmap" ]; then
+        current_sprint="$(yq -o=json '.current // {}' "$roadmap" 2>/dev/null \
+            | jq -c '{id, version, title, status, deliverables} | if .version == null and .title == null and .id == null then null else (.deliverables = ((.deliverables // [])[:12])) | if .id == null then del(.id) else . end end' 2>/dev/null)" || true
         [ -n "$current_sprint" ] || current_sprint="null"
     fi
+    lane="$(lane_context)"
+    [ -n "$lane" ] || lane="null"
 
     # Need at least one thing to inject
-    [ -z "$name" ] && [ -z "$freshness" ] && [ -z "$sycophancy" ] && [ -z "$sprint" ] && [ -z "$coding_standards" ] && [ "$current_sprint" = "null" ] && return 0
+    [ -z "$name" ] && [ -z "$freshness" ] && [ -z "$sycophancy" ] && [ -z "$sprint" ] && [ -z "$coding_standards" ] && [ "$current_sprint" = "null" ] && [ "$lane" = "null" ] && return 0
 
     jq -c -n \
         --argjson current_sprint "$current_sprint" \
+        --argjson lane "$lane" \
         --arg name "$name" \
         --arg type "$type" \
         --arg description "$description" \
@@ -170,17 +296,24 @@ build_system_prompt() {
         --arg sprint "$sprint" \
         --arg coding_standards "$coding_standards" \
         '{project:{name:$name,type:$type,description:$description,stack:$stack,conventions:$conventions},protocols:{freshness:$freshness,sycophancy:$sycophancy,sprint:$sprint,coding_standards:$coding_standards}}
+         + (if $lane == null then {} else {lane:$lane} end)
          + (if $current_sprint == null then {} else {current_sprint:$current_sprint} end)'
 }
 
 # One line about the current sprint, printed at launch: "3.3.0 title [status], 3 deliverables"
+# (in a lane, the lane first: "Lane: engine (Engine)")
 sprint_summary() {
-    [ -f .asimov/roadmap.yaml ] || return 0
+    [ -n "${ASIMOV_LANE:-}" ] && printf 'Lane: %s (%s)\n' "$ASIMOV_LANE" \
+        "$(yq -r ".lanes[] | select(.id == \"${ASIMOV_LANE}\") | .title // \"\"" .asimov/project.yaml 2>/dev/null)"
+    local roadmap
+    roadmap="$(roadmap_file)"
+    [ -f "$roadmap" ] || return 0
     local v t s n
-    v="$(cfg_get .asimov/roadmap.yaml '.current.version')"
-    t="$(cfg_get .asimov/roadmap.yaml '.current.title')"
-    s="$(cfg_get .asimov/roadmap.yaml '.current.status')"
-    n="$(yq '.current.deliverables // [] | length' .asimov/roadmap.yaml 2>/dev/null || echo 0)"
+    v="$(cfg_get "$roadmap" '.current.version')"
+    [ -n "$v" ] || v="$(cfg_get "$roadmap" '.current.id')"
+    t="$(cfg_get "$roadmap" '.current.title')"
+    s="$(cfg_get "$roadmap" '.current.status')"
+    n="$(yq '.current.deliverables // [] | length' "$roadmap" 2>/dev/null || echo 0)"
     [ -n "$v" ] || [ -n "$t" ] || return 0
     printf 'Sprint: %s %s [%s], %s deliverable(s)\n' "$v" "$t" "${s:-no status}" "$n"
 }
@@ -228,6 +361,9 @@ launch_ai() {
         echo "Inside ${session} session. Protocols active via system prompt."
         exit 0
     fi
+
+    # A project in lanes is launched in one of them (asimov --lane <id>)
+    [ -d .asimov ] && require_lane
 
     # Determine which AI to use
     local ai
@@ -599,17 +735,46 @@ cmd_migrate() {
         changed=1
     fi
 
+    # Lanes: say what is wrong with them, and give each lane its roadmap
+    local problems id
+    problems="$(lane_problems)"
+    if [ -n "$problems" ]; then
+        echo "Lanes in project.yaml need fixing by hand:"
+        printf '  %s\n' "$problems"
+        changed=1
+    else
+        while IFS= read -r id; do
+            [ -n "$id" ] || continue
+            [ -f ".asimov/roadmap/${id}.yaml" ] && continue
+            mkdir -p .asimov/roadmap
+            printf '# Roadmap of the %s lane. Same schema as roadmap.yaml.\ncurrent: {}\nbacklog: []\n' \
+                "$id" > ".asimov/roadmap/${id}.yaml"
+            echo "Added .asimov/roadmap/${id}.yaml"
+            changed=1
+        done < <(lane_ids)
+    fi
+
     # Warn about unexpected files
     local expected="project.yaml roadmap.yaml freshness.json sycophancy.json sprint.json coding-standards.json launch.yaml"
     local orphans=""
+    has_lanes && expected="${expected} roadmap"
     for f in .asimov/*; do
         [ -e "$f" ] || continue
         local base
         base=$(basename "$f")
-        if ! echo "$expected" | grep -qw "$base"; then
+        if [[ " ${expected} " != *" ${base} "* ]]; then
             orphans="${orphans}  ${f}\n"
         fi
     done
+    if [ -d .asimov/roadmap ] && has_lanes; then
+        local ids
+        ids=" $(lane_ids | tr '\n' ' ')"
+        for f in .asimov/roadmap/*; do
+            [ -e "$f" ] || continue
+            base=$(basename "$f" .yaml)
+            [[ "$f" == *.yaml ]] && [[ "$ids" == *" ${base} "* ]] || orphans="${orphans}  ${f} (no lane of that name)\n"
+        done
+    fi
     if [ -n "$orphans" ]; then
         echo ""
         echo "Unexpected files in .asimov/ (review manually):"
@@ -1628,7 +1793,25 @@ cmd_status() {
         elif [ "$pfmt" -gt "$ASIMOV_FORMAT" ]; then
             st_warn ".asimov/ format ${pfmt} is newer than this asimov (asimov update)"
         fi
-        if [ -f .asimov/roadmap.yaml ]; then
+        local problems
+        problems="$(lane_problems)"
+        if [ -n "$problems" ]; then
+            while IFS= read -r line; do st_warn "lanes: ${line}"; done <<< "$problems"
+        elif has_lanes; then
+            local id rf v here
+            while IFS= read -r id; do
+                rf=".asimov/roadmap/${id}.yaml"
+                here=""
+                [ "$id" = "${ASIMOV_LANE:-}" ] && here=" (this session)"
+                if [ -f "$rf" ]; then
+                    v="$(cfg_get "$rf" '.current.version')"
+                    [ -n "$v" ] || v="$(cfg_get "$rf" '.current.id')"
+                    st_ok "lane ${id}${here}: ${v:+${v} }$(cfg_get "$rf" '.current.title') [$(cfg_get "$rf" '.current.status')], $(yq '.backlog // [] | length' "$rf") in backlog"
+                else
+                    st_warn "lane ${id} has no ${rf} (asimov migrate)"
+                fi
+            done < <(lane_ids)
+        elif [ -f .asimov/roadmap.yaml ]; then
             st_ok "roadmap: $(cfg_get .asimov/roadmap.yaml '.current.version') $(cfg_get .asimov/roadmap.yaml '.current.title') [$(cfg_get .asimov/roadmap.yaml '.current.status')]"
         else
             st_warn "no .asimov/roadmap.yaml"
@@ -1767,6 +1950,7 @@ asimov v${ASIMOV_VERSION} - full-autonomy launcher for AI coding CLIs (sandbox u
 
 USAGE:
     asimov              Launch AI CLI with protocols (default)
+    asimov --lane <id>  Launch in one lane of a project worked on in lanes
     asimov init [name]  Initialize .asimov/ in current project
     asimov migrate      Update .asimov/ to latest format
     asimov update       Install the latest tagged release (checksum-verified)
@@ -1785,6 +1969,11 @@ DEPENDENCIES:
 CONFIGURATION:
     Global:  ~/.asimov/config.yaml
     Project: .asimov/launch.yaml (overrides global)
+
+LANES (optional; for several sessions working on one project at once):
+    .asimov/project.yaml lanes:     id, title, owns (paths), releases (one lane)
+    .asimov/roadmap/<id>.yaml       each lane's roadmap (as roadmap.yaml)
+    ASIMOV_LANE=<id>                same as --lane; the pre-commit hook reads it
 
 PROTOCOLS (Claude: system prompt; Gemini/Codex: first message):
     .asimov/freshness.json          Prefer ref fetch for web content when installed
@@ -1813,6 +2002,9 @@ case "${1:-}" in
     config)     shift; cmd_config "$@" ;;
     --help|-h)  show_help ;;
     --version)  echo "asimov ${ASIMOV_VERSION}" ;;
+    --lane)     [ -n "${2:-}" ] || { echo "--lane needs a lane id" >&2; exit 1; }
+                ASIMOV_LANE="$2"; launch_ai ;;
+    --lane=*)   ASIMOV_LANE="${1#--lane=}"; launch_ai ;;
     "")         launch_ai ;;
     *)          echo "Unknown command: $1. Run 'asimov --help'" >&2; exit 1 ;;
 esac
