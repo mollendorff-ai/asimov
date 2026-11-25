@@ -212,7 +212,7 @@ _prompt() {
     rm .asimov/roadmap/features.yaml
     ASIMOV_LANE=engine run "$ASIMOV_BIN" status
     [[ "$output" == *"lane engine (this session): E1-FASTER Parse twice as fast [in_progress], 2 in backlog"* ]]
-    [[ "$output" == *"lane docs:  [], 0 in backlog"* ]]
+    [[ "$output" == *"lane docs: no current sprint, 0 in backlog"* ]]
     [[ "$output" == *"lane features has no .asimov/roadmap/features.yaml (asimov migrate)"* ]]
     [[ "$output" != *"roadmap: 1.0.0"* ]]
 }

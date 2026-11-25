@@ -1798,7 +1798,7 @@ cmd_status() {
         if [ -n "$problems" ]; then
             while IFS= read -r line; do st_warn "lanes: ${line}"; done <<< "$problems"
         elif has_lanes; then
-            local id rf v here
+            local id rf v t n here
             while IFS= read -r id; do
                 rf=".asimov/roadmap/${id}.yaml"
                 here=""
@@ -1806,7 +1806,13 @@ cmd_status() {
                 if [ -f "$rf" ]; then
                     v="$(cfg_get "$rf" '.current.version')"
                     [ -n "$v" ] || v="$(cfg_get "$rf" '.current.id')"
-                    st_ok "lane ${id}${here}: ${v:+${v} }$(cfg_get "$rf" '.current.title') [$(cfg_get "$rf" '.current.status')], $(yq '.backlog // [] | length' "$rf") in backlog"
+                    t="$(cfg_get "$rf" '.current.title')"
+                    n="$(yq '.backlog // [] | length' "$rf")"
+                    if [ -n "$v" ] || [ -n "$t" ]; then
+                        st_ok "lane ${id}${here}: ${v:+${v} }${t} [$(cfg_get "$rf" '.current.status')], ${n} in backlog"
+                    else
+                        st_ok "lane ${id}${here}: no current sprint, ${n} in backlog"
+                    fi
                 else
                     st_warn "lane ${id} has no ${rf} (asimov migrate)"
                 fi
