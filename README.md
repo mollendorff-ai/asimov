@@ -41,6 +41,9 @@ Autonomy without guardrails produces fast garbage. Asimov pairs the two:
 - **Current sprint** -- your roadmap's current milestone is put in the
   agent's prompt, so it starts on the current sprint before you type
   anything, without spending a turn reading the file.
+- **Lanes** -- for several sessions on one project at once: each works in
+  a lane that owns some paths and has its own roadmap, so two sessions
+  never pick the same work or edit the same roadmap file.
 - **Quality gate** -- a pre-commit hook that blocks any commit that is not
   formatted, lint-clean and 100% covered, so the agent has to fix the code.
   A hook can be skipped (`git commit --no-verify`), so build mode also runs
@@ -135,6 +138,54 @@ append to the system prompt, so their protocols arrive as the first message
 and can be lost when a long session is compacted. Their launch is tested
 with mock CLIs only, so a flag renamed in a new release would break it
 without any test noticing.
+
+## Lanes
+
+One session per project needs none of this. When several sessions work on
+one project at the same time, each needs to know which work is its own, or
+two of them build the same thing and every pull request collides in the
+same roadmap and changelog. Lanes split the project between them.
+
+Declare them in `.asimov/project.yaml`:
+
+```yaml
+lanes:
+  - id: engine
+    title: "Engine: make what exists better"
+    owns: ["src/", "tests/", ".github/"]
+    releases: true          # the one lane that bumps the version
+  - id: docs
+    title: "Manual"
+    owns: ["docs/", "README.md", "examples/"]
+shared: ["changelog.d/"]    # any lane may change these
+changelog:
+  fragments: changelog.d/   # where lanes put their changelog entries
+```
+
+Each lane has its own roadmap, `.asimov/roadmap/<id>.yaml`, with the same
+schema as `roadmap.yaml` (`current`, `previous`, `backlog`; `current` may be
+named by `id` instead of `version`). `asimov migrate` creates any that are
+missing. Launch a session in one lane:
+
+```bash
+asimov --lane docs          # or: ASIMOV_LANE=docs asimov
+```
+
+The agent is given its lane's current sprint, the paths it owns, the other
+lanes and one rule: take work only from its own roadmap, change only its
+own and the shared paths, and put work that belongs to another lane at the
+end of that lane's backlog instead of doing it. Only the lane with
+`releases: true` bumps the version and writes `CHANGELOG.md`; the others add
+a file under `changelog.fragments`. Asimov does not assemble the fragments:
+use the changelog tool your stack already has (towncrier, changie, scriv,
+changesets).
+
+A project with lanes refuses to launch without one. `asimov status` shows
+every lane's sprint and backlog. The pre-commit hook, in a session with
+`ASIMOV_LANE` set, lists staged files outside the lane's paths (a warning,
+not a failure: a feature sometimes has to touch a shared file). In a path,
+`*` matches across folders and a path ending in `/` means everything under
+it. Build mode does not use lanes.
 
 ## Build mode
 
